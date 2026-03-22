@@ -1,0 +1,10 @@
+services:
+  api-gateway:
+    container_name: api_gateway_dev
+    build:
+      context: ./src
+      dockerfile: Dockerfile
+    env_file:
+      - ./src/.env
+    ports:
+      - "7005:7005"
