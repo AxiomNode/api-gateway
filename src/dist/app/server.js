@@ -3,12 +3,14 @@ import cors from "@fastify/cors";
 import Fastify from "fastify";
 import { loadConfig } from "./config.js";
 import { healthRoutes } from "./routes/health.js";
+import { proxyRoutes } from "./routes/proxy.js";
 async function buildServer() {
     const config = loadConfig();
     const app = Fastify({ logger: true });
     const allowedOrigins = config.ALLOWED_ORIGINS.split(",").map((v) => v.trim());
     await app.register(cors, { origin: allowedOrigins });
     await healthRoutes(app);
+    await proxyRoutes(app, config);
     return { app, config };
 }
 async function main() {
