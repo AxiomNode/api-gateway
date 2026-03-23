@@ -1,0 +1,36 @@
+FROM node:20-bookworm-slim AS deps
+WORKDIR /workspace
+
+COPY contracts-and-schemas /workspace/contracts-and-schemas
+COPY shared-sdk-client/typescript /workspace/shared-sdk-client/typescript
+
+WORKDIR /workspace/shared-sdk-client/typescript
+RUN npm install && npm run build
+
+WORKDIR /workspace/api-gateway
+COPY api-gateway/src/package.json api-gateway/src/package-lock.json* ./
+RUN npm install && \
+	rm -rf node_modules/@axiomnode/shared-sdk-client && \
+	mkdir -p node_modules/@axiomnode && \
+	cp -R /workspace/shared-sdk-client/typescript node_modules/@axiomnode/shared-sdk-client
+
+FROM node:20-bookworm-slim AS build
+WORKDIR /workspace/api-gateway
+COPY --from=deps /workspace/shared-sdk-client/typescript /workspace/shared-sdk-client/typescript
+COPY --from=deps /workspace/api-gateway/node_modules ./node_modules
+COPY api-gateway/src/package.json ./package.json
+COPY api-gateway/src/package-lock.json ./package-lock.json
+COPY api-gateway/src/app ./app
+COPY api-gateway/src/tsconfig.json ./tsconfig.json
+COPY api-gateway/src/.env.example ./.env.example
+RUN npm run build
+
+FROM node:20-bookworm-slim AS runtime
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=deps /workspace/shared-sdk-client/typescript /workspace/shared-sdk-client/typescript
+COPY --from=build /workspace/api-gateway/node_modules ./node_modules
+COPY --from=build /workspace/api-gateway/dist ./dist
+COPY --from=build /workspace/api-gateway/.env.example ./.env.example
+EXPOSE 7005
+CMD ["node", "dist/app/server.js"]

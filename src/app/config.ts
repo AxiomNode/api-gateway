@@ -4,7 +4,10 @@ const ConfigSchema = z.object({
   SERVICE_NAME: z.string().default("api-gateway"),
   SERVICE_PORT: z.coerce.number().int().positive().default(7005),
   NODE_ENV: z.string().default("development"),
-  ALLOWED_ORIGINS: z.string().default("http://localhost:3000")
+  ALLOWED_ORIGINS: z.string().default("http://localhost:3000"),
+  BFF_MOBILE_URL: z.string().url().default("http://localhost:7010"),
+  BFF_BACKOFFICE_URL: z.string().url().default("http://localhost:7011"),
+  EDGE_API_TOKEN: z.string().default(""),
 });
 
 export type AppConfig = z.infer<typeof ConfigSchema>;

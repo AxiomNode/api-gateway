@@ -20,8 +20,18 @@ Gateway de entrada unico para AxiomNode.
 2. Copiar `.env.example` a `.env`.
 3. Instalar dependencias y levantar en modo dev.
 
-## Endpoints base
+## Endpoints
 
 - `GET /health`
+- `GET /v1/mobile/games/quiz/random`
+- `GET /v1/mobile/games/wordpass/random`
+- `POST /v1/mobile/games/quiz/generate`
+- `POST /v1/mobile/games/wordpass/generate`
+- `GET /v1/backoffice/users/leaderboard`
+- `GET /v1/backoffice/monitor/stats`
 
-Los endpoints funcionales por dominio se agregaran conforme avancen los BFFs y contratos.
+## Variables clave
+
+- `BFF_MOBILE_URL`
+- `BFF_BACKOFFICE_URL`
+- `EDGE_API_TOKEN` (si se define, requiere `Authorization: Bearer <token>` en `/v1/*`)
