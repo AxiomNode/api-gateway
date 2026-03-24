@@ -23,7 +23,7 @@ async function forwardRequest(
   request: FastifyRequest,
   reply: FastifyReply,
   targetUrl: string,
-  method: "GET" | "POST",
+  method: "GET" | "POST" | "PATCH",
 ): Promise<void> {
   const result = await forwardHttp({
     targetUrl,
@@ -38,6 +38,24 @@ async function forwardRequest(
 }
 
 export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Promise<void> {
+  app.post("/v1/backoffice/auth/session", async (request, reply) => {
+    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+      return;
+    }
+
+    const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/auth/session", {});
+    await forwardRequest(request, reply, url, "POST");
+  });
+
+  app.get("/v1/backoffice/auth/me", async (request, reply) => {
+    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+      return;
+    }
+
+    const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/auth/me", {});
+    await forwardRequest(request, reply, url, "GET");
+  });
+
   app.get("/v1/mobile/games/quiz/random", async (request, reply) => {
     if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
       return;
@@ -90,5 +108,37 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
 
     const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/monitor/stats", request.query as Record<string, unknown>);
     await forwardRequest(request, reply, url, "GET");
+  });
+
+  app.post("/v1/backoffice/users/events/manual", async (request, reply) => {
+    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+      return;
+    }
+
+    const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/users/events/manual", {});
+    await forwardRequest(request, reply, url, "POST");
+  });
+
+  app.get("/v1/backoffice/admin/users/roles", async (request, reply) => {
+    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+      return;
+    }
+
+    const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/admin/users/roles", {});
+    await forwardRequest(request, reply, url, "GET");
+  });
+
+  app.patch("/v1/backoffice/admin/users/roles/:firebaseUid", async (request, reply) => {
+    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+      return;
+    }
+
+    const params = request.params as { firebaseUid: string };
+    const url = buildUrl(
+      config.BFF_BACKOFFICE_URL,
+      `/v1/backoffice/admin/users/roles/${encodeURIComponent(params.firebaseUid)}`,
+      {},
+    );
+    await forwardRequest(request, reply, url, "PATCH");
   });
 }
