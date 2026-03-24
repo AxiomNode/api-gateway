@@ -12,7 +12,10 @@ async function buildServer() {
   const app = Fastify({ logger: true });
 
   const allowedOrigins = config.ALLOWED_ORIGINS.split(",").map((v) => v.trim());
-  await app.register(cors, { origin: allowedOrigins });
+  await app.register(cors, {
+    origin: allowedOrigins,
+    methods: ["GET", "HEAD", "POST", "PATCH", "OPTIONS"],
+  });
 
   await healthRoutes(app);
   await proxyRoutes(app, config);

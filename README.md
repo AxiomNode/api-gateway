@@ -32,6 +32,7 @@ Gateway de entrada unico para AxiomNode.
 
 ## Variables clave
 
+- `ALLOWED_ORIGINS` (incluye `http://localhost:7080` cuando backoffice corre en Docker)
 - `BFF_MOBILE_URL`
 - `BFF_BACKOFFICE_URL`
 - `EDGE_API_TOKEN` (si se define, requiere `Authorization: Bearer <token>` en `/v1/*`)
