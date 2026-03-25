@@ -7,6 +7,7 @@ const ConfigSchema = z.object({
     BFF_MOBILE_URL: z.string().url().default("http://localhost:7010"),
     BFF_BACKOFFICE_URL: z.string().url().default("http://localhost:7011"),
     EDGE_API_TOKEN: z.string().default(""),
+    METRICS_LOG_BUFFER_SIZE: z.coerce.number().int().min(50).max(5000).default(1000),
 });
 export function loadConfig() {
     const parsed = ConfigSchema.safeParse(process.env);

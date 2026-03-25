@@ -5,11 +5,14 @@ import Fastify from "fastify";
 
 import { loadConfig } from "./config.js";
 import { healthRoutes } from "./routes/health.js";
+import { monitoringRoutes } from "./routes/monitoring.js";
 import { proxyRoutes } from "./routes/proxy.js";
+import { ServiceMetrics } from "./services/serviceMetrics.js";
 
 async function buildServer() {
   const config = loadConfig();
   const app = Fastify({ logger: true });
+  const metrics = new ServiceMetrics(config);
 
   const allowedOrigins = config.ALLOWED_ORIGINS.split(",").map((v) => v.trim());
   await app.register(cors, {
@@ -17,15 +20,44 @@ async function buildServer() {
     methods: ["GET", "HEAD", "POST", "PATCH", "OPTIONS"],
   });
 
+  app.addHook("onRequest", async (request) => {
+    const requestAny = request as typeof request & {
+      _requestBytes?: number;
+    };
+
+    const contentLength = Number(request.headers["content-length"] ?? 0);
+    requestAny._requestBytes = Number.isFinite(contentLength) ? contentLength : 0;
+  });
+
+  app.addHook("onResponse", async (request, reply) => {
+    const requestAny = request as typeof request & {
+      _requestBytes?: number;
+    };
+
+    const responseContentLength = Number(reply.getHeader("content-length") ?? 0);
+    const responseBytes = Number.isFinite(responseContentLength) ? responseContentLength : 0;
+    const route = (request.routeOptions.url ?? request.url.split("?")[0]) as string;
+
+    metrics.recordIncomingRequest({
+      method: request.method,
+      route,
+      statusCode: reply.statusCode,
+      requestBytes: requestAny._requestBytes ?? 0,
+      responseBytes,
+    });
+  });
+
   await healthRoutes(app);
+  await monitoringRoutes(app, metrics);
   await proxyRoutes(app, config);
 
-  return { app, config };
+  return { app, config, metrics };
 }
 
 async function main() {
-  const { app, config } = await buildServer();
+  const { app, config, metrics } = await buildServer();
   await app.listen({ host: "0.0.0.0", port: config.SERVICE_PORT });
+  metrics.recordLog("info", "gateway_started", { port: config.SERVICE_PORT });
   app.log.info({ service: config.SERVICE_NAME }, "Gateway started");
 }
 

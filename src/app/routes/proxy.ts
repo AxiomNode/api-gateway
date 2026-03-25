@@ -141,4 +141,55 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
     );
     await forwardRequest(request, reply, url, "PATCH");
   });
+
+  app.get("/v1/backoffice/services", async (request, reply) => {
+    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+      return;
+    }
+
+    const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/services", {});
+    await forwardRequest(request, reply, url, "GET");
+  });
+
+  app.get("/v1/backoffice/services/:service/metrics", async (request, reply) => {
+    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+      return;
+    }
+
+    const params = request.params as { service: string };
+    const url = buildUrl(
+      config.BFF_BACKOFFICE_URL,
+      `/v1/backoffice/services/${encodeURIComponent(params.service)}/metrics`,
+      request.query as Record<string, unknown>,
+    );
+    await forwardRequest(request, reply, url, "GET");
+  });
+
+  app.get("/v1/backoffice/services/:service/logs", async (request, reply) => {
+    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+      return;
+    }
+
+    const params = request.params as { service: string };
+    const url = buildUrl(
+      config.BFF_BACKOFFICE_URL,
+      `/v1/backoffice/services/${encodeURIComponent(params.service)}/logs`,
+      request.query as Record<string, unknown>,
+    );
+    await forwardRequest(request, reply, url, "GET");
+  });
+
+  app.get("/v1/backoffice/services/:service/data", async (request, reply) => {
+    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+      return;
+    }
+
+    const params = request.params as { service: string };
+    const url = buildUrl(
+      config.BFF_BACKOFFICE_URL,
+      `/v1/backoffice/services/${encodeURIComponent(params.service)}/data`,
+      request.query as Record<string, unknown>,
+    );
+    await forwardRequest(request, reply, url, "GET");
+  });
 }
