@@ -37,6 +37,39 @@ async function forwardRequest(
   reply.send(result.payload);
 }
 
+async function forwardDeleteRequest(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  targetUrl: string,
+): Promise<void> {
+  const outgoingHeaders = new Headers();
+  for (const [key, value] of Object.entries(request.headers as Record<string, string | undefined>)) {
+    if (typeof value === "string" && value.length > 0) {
+      outgoingHeaders.set(key, value);
+    }
+  }
+
+  const response = await fetch(targetUrl, {
+    method: "DELETE",
+    headers: outgoingHeaders,
+  });
+
+  const text = await response.text();
+  reply.code(response.status);
+  reply.header("content-type", response.headers.get("content-type") ?? "application/json");
+
+  if (!text) {
+    reply.send({});
+    return;
+  }
+
+  try {
+    reply.send(JSON.parse(text));
+  } catch {
+    reply.send(text);
+  }
+}
+
 export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Promise<void> {
   app.post("/v1/backoffice/auth/session", async (request, reply) => {
     if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
@@ -191,5 +224,47 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
       request.query as Record<string, unknown>,
     );
     await forwardRequest(request, reply, url, "GET");
+  });
+
+  app.get("/v1/backoffice/services/:service/catalogs", async (request, reply) => {
+    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+      return;
+    }
+
+    const params = request.params as { service: string };
+    const url = buildUrl(
+      config.BFF_BACKOFFICE_URL,
+      `/v1/backoffice/services/${encodeURIComponent(params.service)}/catalogs`,
+      {},
+    );
+    await forwardRequest(request, reply, url, "GET");
+  });
+
+  app.post("/v1/backoffice/services/:service/data", async (request, reply) => {
+    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+      return;
+    }
+
+    const params = request.params as { service: string };
+    const url = buildUrl(
+      config.BFF_BACKOFFICE_URL,
+      `/v1/backoffice/services/${encodeURIComponent(params.service)}/data`,
+      {},
+    );
+    await forwardRequest(request, reply, url, "POST");
+  });
+
+  app.delete("/v1/backoffice/services/:service/data/:entryId", async (request, reply) => {
+    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+      return;
+    }
+
+    const params = request.params as { service: string; entryId: string };
+    const url = buildUrl(
+      config.BFF_BACKOFFICE_URL,
+      `/v1/backoffice/services/${encodeURIComponent(params.service)}/data/${encodeURIComponent(params.entryId)}`,
+      request.query as Record<string, unknown>,
+    );
+    await forwardDeleteRequest(request, reply, url);
   });
 }
