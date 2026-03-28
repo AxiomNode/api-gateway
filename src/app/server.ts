@@ -36,6 +36,8 @@ async function buildServer() {
     const inboundCorrelationId = String(request.headers["x-correlation-id"] ?? "").trim();
     requestAny._correlationId = inboundCorrelationId || randomUUID();
     request.headers["x-correlation-id"] = requestAny._correlationId;
+
+    metrics.incrementInflight();
   });
 
   app.addHook("onResponse", async (request, reply) => {
@@ -70,6 +72,8 @@ async function buildServer() {
       duration_ms: durationMs,
       error_code: reply.statusCode >= 500 ? "upstream_or_internal_error" : undefined,
     });
+
+    metrics.decrementInflight();
   });
 
   await healthRoutes(app);
