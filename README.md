@@ -8,6 +8,10 @@ Gateway de entrada unico para AxiomNode.
 - Centralizar auth, rate limit, CORS y observabilidad de borde.
 - Enrutar trafico hacia BFFs y microservicios internos.
 
+## Responsabilidad principal
+
+- Punto unico de entrada edge para seguridad base, enrutado y politicas transversales.
+
 ## Estructura
 
 - `src/`: codigo fuente TypeScript.
