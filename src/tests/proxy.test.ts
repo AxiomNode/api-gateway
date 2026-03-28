@@ -207,6 +207,64 @@ describe("proxy routes", () => {
     await app.close();
   });
 
+  it("forwards critical headers to backoffice routes", async () => {
+    const app = Fastify();
+
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    await proxyRoutes(app, {
+      SERVICE_NAME: "api-gateway",
+      SERVICE_PORT: 7005,
+      NODE_ENV: "test",
+      ALLOWED_ORIGINS: "http://localhost:3000",
+      BFF_MOBILE_URL: "http://bff-mobile:7010",
+      BFF_BACKOFFICE_URL: "http://bff-backoffice:7011",
+      EDGE_API_TOKEN: "edge-secret",
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/backoffice/services/microservice-quiz/data",
+      headers: {
+        authorization: "Bearer edge-secret",
+        "x-correlation-id": "corr-critical-1",
+        "x-firebase-id-token": "firebase-token-abc",
+        "x-api-key": "ai-key-xyz",
+      },
+      payload: {
+        dataset: "history",
+        categoryId: "9",
+        language: "es",
+        difficultyPercentage: 60,
+        content: { question: "Q" },
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://bff-backoffice:7011/v1/backoffice/services/microservice-quiz/data",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          authorization: "Bearer edge-secret",
+          "x-correlation-id": "corr-critical-1",
+          "x-firebase-id-token": "firebase-token-abc",
+          "x-api-key": "ai-key-xyz",
+        }),
+      }),
+    );
+
+    vi.unstubAllGlobals();
+    await app.close();
+  });
+
   it("forwards backoffice service data deletion", async () => {
     const app = Fastify();
 
