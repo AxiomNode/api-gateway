@@ -7,6 +7,7 @@ const ConfigSchema = z.object({
     BFF_MOBILE_URL: z.string().url().default("http://localhost:7010"),
     BFF_BACKOFFICE_URL: z.string().url().default("http://localhost:7011"),
     UPSTREAM_TIMEOUT_MS: z.coerce.number().int().min(1000).max(120000).default(15000),
+    UPSTREAM_GENERATION_TIMEOUT_MS: z.coerce.number().int().min(1000).max(300000).default(120000),
     EDGE_API_TOKEN: z.string().default(""),
     METRICS_LOG_BUFFER_SIZE: z.coerce.number().int().min(50).max(5000).default(1000),
 });

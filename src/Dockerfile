@@ -8,6 +8,7 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build
+RUN npm prune --production
 
 FROM node:20-bookworm-slim AS runtime
 WORKDIR /app

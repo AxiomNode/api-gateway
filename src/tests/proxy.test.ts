@@ -100,7 +100,7 @@ describe("proxy routes", () => {
         authorization: "Bearer edge-secret",
         "x-correlation-id": "corr-post",
       },
-      payload: { topic: "science", language: "es" },
+      payload: { query: "science", language: "es" },
     });
 
     expect(response.statusCode).toBe(200);
@@ -108,7 +108,7 @@ describe("proxy routes", () => {
       "http://bff-mobile:7010/v1/mobile/games/quiz/generate",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({ topic: "science", language: "es" }),
+        body: JSON.stringify({ query: "science", language: "es" }),
         headers: expect.objectContaining({
           authorization: "Bearer edge-secret",
           "x-correlation-id": "corr-post",

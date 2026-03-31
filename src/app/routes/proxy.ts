@@ -1,7 +1,9 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { UpstreamTimeoutError, buildUrl, forwardHttp } from "@axiomnode/shared-sdk-client/proxy";
+import { CircuitBreaker, CircuitBreakerOpenError, buildUrl, forwardHttp } from "@axiomnode/shared-sdk-client/proxy";
 
 import type { AppConfig } from "../config.js";
+
+/** @module proxy — Reverse-proxy routes forwarding requests to BFF-Mobile and BFF-Backoffice with circuit breakers. */
 
 function checkEdgeAuth(request: FastifyRequest, reply: FastifyReply, edgeApiToken: string): boolean {
   if (!edgeApiToken) {
@@ -19,82 +21,62 @@ function checkEdgeAuth(request: FastifyRequest, reply: FastifyReply, edgeApiToke
   return true;
 }
 
+const breakers = new Map<string, CircuitBreaker>();
+
+function getBreakerForUrl(baseUrl: string): CircuitBreaker {
+  let breaker = breakers.get(baseUrl);
+  if (!breaker) {
+    breaker = new CircuitBreaker({ failureThreshold: 5, resetTimeoutMs: 30_000 });
+    breakers.set(baseUrl, breaker);
+  }
+  return breaker;
+}
+
 async function forwardRequest(
   request: FastifyRequest,
   reply: FastifyReply,
   targetUrl: string,
-  method: "GET" | "POST" | "PATCH",
+  method: "GET" | "POST" | "PATCH" | "DELETE",
   timeoutMs: number,
+  breaker: CircuitBreaker,
 ): Promise<void> {
-  const result = await forwardHttp({
-    targetUrl,
-    method,
-    requestHeaders: request.headers as Record<string, string | undefined>,
-    body: request.body,
-    timeoutMs,
-  });
-
-  reply.code(result.status);
-  reply.header("content-type", result.contentType);
-  reply.send(result.payload);
-}
-
-async function forwardDeleteRequest(
-  request: FastifyRequest,
-  reply: FastifyReply,
-  targetUrl: string,
-  timeoutMs: number,
-): Promise<void> {
-  const outgoingHeaders = new Headers();
-  for (const [key, value] of Object.entries(request.headers as Record<string, string | undefined>)) {
-    if (typeof value === "string" && value.length > 0) {
-      outgoingHeaders.set(key, value);
-    }
-  }
-
-  const controller = new AbortController();
-  const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
-
-  let response: Response;
   try {
-    response = await fetch(targetUrl, {
-      method: "DELETE",
-      headers: outgoingHeaders,
-      signal: controller.signal,
-    });
+    const result = await breaker.call(() =>
+      forwardHttp({
+        targetUrl,
+        method,
+        requestHeaders: request.headers as Record<string, string | undefined>,
+        body: request.body,
+        timeoutMs,
+      }),
+    );
+
+    reply.code(result.status);
+    reply.header("content-type", result.contentType);
+    reply.send(result.payload);
   } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
-      throw new UpstreamTimeoutError(`Upstream request timed out after ${timeoutMs}ms`);
+    if (error instanceof CircuitBreakerOpenError) {
+      reply.code(503).send({ error: "Service temporarily unavailable" });
+      return;
     }
     throw error;
-  } finally {
-    clearTimeout(timeoutHandle);
-  }
-
-  const text = await response.text();
-  reply.code(response.status);
-  reply.header("content-type", response.headers.get("content-type") ?? "application/json");
-
-  if (!text) {
-    reply.send({});
-    return;
-  }
-
-  try {
-    reply.send(JSON.parse(text));
-  } catch {
-    reply.send(text);
   }
 }
 
+/** Registers all gateway proxy routes that forward to downstream BFF services. */
 export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Promise<void> {
+  const upstreamTimeoutMs = config.UPSTREAM_TIMEOUT_MS ?? 15000;
+  const upstreamGenerationTimeoutMs = config.UPSTREAM_GENERATION_TIMEOUT_MS ?? 60000;
+  const mobileBreaker = getBreakerForUrl(config.BFF_MOBILE_URL);
+  const backofficeBreaker = getBreakerForUrl(config.BFF_BACKOFFICE_URL);
+
   app.post("/v1/backoffice/auth/session", async (request, reply) => {
     if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
       return;
     }
 
     const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/auth/session", {});
-    await forwardRequest(request, reply, url, "POST", config.UPSTREAM_TIMEOUT_MS ?? 15000);
+    await forwardRequest(request, reply, url, "POST", upstreamTimeoutMs, backofficeBreaker);
   });
 
   app.get("/v1/backoffice/auth/me", async (request, reply) => {
@@ -103,7 +85,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
     }
 
     const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/auth/me", {});
-    await forwardRequest(request, reply, url, "GET", config.UPSTREAM_TIMEOUT_MS ?? 15000);
+    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, backofficeBreaker);
   });
 
   app.get("/v1/mobile/games/quiz/random", async (request, reply) => {
@@ -112,7 +94,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
     }
 
     const url = buildUrl(config.BFF_MOBILE_URL, "/v1/mobile/games/quiz/random", request.query as Record<string, unknown>);
-    await forwardRequest(request, reply, url, "GET", config.UPSTREAM_TIMEOUT_MS ?? 15000);
+    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, mobileBreaker);
   });
 
   app.get("/v1/mobile/games/wordpass/random", async (request, reply) => {
@@ -121,7 +103,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
     }
 
     const url = buildUrl(config.BFF_MOBILE_URL, "/v1/mobile/games/wordpass/random", request.query as Record<string, unknown>);
-    await forwardRequest(request, reply, url, "GET", config.UPSTREAM_TIMEOUT_MS ?? 15000);
+    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, mobileBreaker);
   });
 
   app.post("/v1/mobile/games/quiz/generate", async (request, reply) => {
@@ -130,7 +112,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
     }
 
     const url = buildUrl(config.BFF_MOBILE_URL, "/v1/mobile/games/quiz/generate", {});
-    await forwardRequest(request, reply, url, "POST", config.UPSTREAM_TIMEOUT_MS ?? 15000);
+    await forwardRequest(request, reply, url, "POST", upstreamGenerationTimeoutMs, mobileBreaker);
   });
 
   app.post("/v1/mobile/games/wordpass/generate", async (request, reply) => {
@@ -139,7 +121,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
     }
 
     const url = buildUrl(config.BFF_MOBILE_URL, "/v1/mobile/games/wordpass/generate", {});
-    await forwardRequest(request, reply, url, "POST", config.UPSTREAM_TIMEOUT_MS ?? 15000);
+    await forwardRequest(request, reply, url, "POST", upstreamGenerationTimeoutMs, mobileBreaker);
   });
 
   app.get("/v1/backoffice/users/leaderboard", async (request, reply) => {
@@ -148,7 +130,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
     }
 
     const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/users/leaderboard", request.query as Record<string, unknown>);
-    await forwardRequest(request, reply, url, "GET", config.UPSTREAM_TIMEOUT_MS ?? 15000);
+    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, backofficeBreaker);
   });
 
   app.get("/v1/backoffice/monitor/stats", async (request, reply) => {
@@ -157,7 +139,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
     }
 
     const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/monitor/stats", request.query as Record<string, unknown>);
-    await forwardRequest(request, reply, url, "GET", config.UPSTREAM_TIMEOUT_MS ?? 15000);
+    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, backofficeBreaker);
   });
 
   app.post("/v1/backoffice/users/events/manual", async (request, reply) => {
@@ -166,7 +148,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
     }
 
     const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/users/events/manual", {});
-    await forwardRequest(request, reply, url, "POST", config.UPSTREAM_TIMEOUT_MS ?? 15000);
+    await forwardRequest(request, reply, url, "POST", upstreamTimeoutMs, backofficeBreaker);
   });
 
   app.get("/v1/backoffice/admin/users/roles", async (request, reply) => {
@@ -175,7 +157,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
     }
 
     const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/admin/users/roles", {});
-    await forwardRequest(request, reply, url, "GET", config.UPSTREAM_TIMEOUT_MS ?? 15000);
+    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, backofficeBreaker);
   });
 
   app.patch("/v1/backoffice/admin/users/roles/:firebaseUid", async (request, reply) => {
@@ -189,7 +171,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
       `/v1/backoffice/admin/users/roles/${encodeURIComponent(params.firebaseUid)}`,
       {},
     );
-    await forwardRequest(request, reply, url, "PATCH", config.UPSTREAM_TIMEOUT_MS ?? 15000);
+    await forwardRequest(request, reply, url, "PATCH", upstreamTimeoutMs, backofficeBreaker);
   });
 
   app.get("/v1/backoffice/services", async (request, reply) => {
@@ -198,7 +180,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
     }
 
     const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/services", {});
-    await forwardRequest(request, reply, url, "GET", config.UPSTREAM_TIMEOUT_MS ?? 15000);
+    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, backofficeBreaker);
   });
 
   app.get("/v1/backoffice/services/:service/metrics", async (request, reply) => {
@@ -212,7 +194,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
       `/v1/backoffice/services/${encodeURIComponent(params.service)}/metrics`,
       request.query as Record<string, unknown>,
     );
-    await forwardRequest(request, reply, url, "GET", config.UPSTREAM_TIMEOUT_MS ?? 15000);
+    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, backofficeBreaker);
   });
 
   app.get("/v1/backoffice/services/:service/logs", async (request, reply) => {
@@ -226,7 +208,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
       `/v1/backoffice/services/${encodeURIComponent(params.service)}/logs`,
       request.query as Record<string, unknown>,
     );
-    await forwardRequest(request, reply, url, "GET", config.UPSTREAM_TIMEOUT_MS ?? 15000);
+    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, backofficeBreaker);
   });
 
   app.get("/v1/backoffice/services/:service/data", async (request, reply) => {
@@ -240,7 +222,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
       `/v1/backoffice/services/${encodeURIComponent(params.service)}/data`,
       request.query as Record<string, unknown>,
     );
-    await forwardRequest(request, reply, url, "GET", config.UPSTREAM_TIMEOUT_MS ?? 15000);
+    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, backofficeBreaker);
   });
 
   app.get("/v1/backoffice/services/:service/catalogs", async (request, reply) => {
@@ -254,7 +236,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
       `/v1/backoffice/services/${encodeURIComponent(params.service)}/catalogs`,
       {},
     );
-    await forwardRequest(request, reply, url, "GET", config.UPSTREAM_TIMEOUT_MS ?? 15000);
+    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, backofficeBreaker);
   });
 
   app.post("/v1/backoffice/services/:service/data", async (request, reply) => {
@@ -268,7 +250,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
       `/v1/backoffice/services/${encodeURIComponent(params.service)}/data`,
       {},
     );
-    await forwardRequest(request, reply, url, "POST", config.UPSTREAM_TIMEOUT_MS ?? 15000);
+    await forwardRequest(request, reply, url, "POST", upstreamTimeoutMs, backofficeBreaker);
   });
 
   app.delete("/v1/backoffice/services/:service/data/:entryId", async (request, reply) => {
@@ -282,6 +264,6 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
       `/v1/backoffice/services/${encodeURIComponent(params.service)}/data/${encodeURIComponent(params.entryId)}`,
       request.query as Record<string, unknown>,
     );
-    await forwardDeleteRequest(request, reply, url, config.UPSTREAM_TIMEOUT_MS ?? 15000);
+    await forwardRequest(request, reply, url, "DELETE", upstreamTimeoutMs, backofficeBreaker);
   });
 }
