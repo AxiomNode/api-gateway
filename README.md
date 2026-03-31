@@ -1,28 +1,28 @@
 # api-gateway
 
-Gateway de entrada unico para AxiomNode.
+Single entry gateway for AxiomNode.
 
-## Objetivo
+## Purpose
 
-- Exponer un unico endpoint publico para app movil y backoffice.
-- Centralizar auth, rate limit, CORS y observabilidad de borde.
-- Enrutar trafico hacia BFFs y microservicios internos.
+- Expose a single public endpoint for the mobile app and backoffice.
+- Centralize auth, rate limiting, CORS, and edge observability.
+- Route traffic to BFFs and internal microservices.
 
-## Responsabilidad principal
+## Main responsibility
 
-- Punto unico de entrada edge para seguridad base, enrutado y politicas transversales.
+- Single edge entry point for baseline security, routing, and cross-cutting policies.
 
-## Estructura
+## Structure
 
-- `src/`: codigo fuente TypeScript.
-- `docs/`: arquitectura y decisiones del gateway.
-- `.github/workflows/ci.yml`: pipeline base (build/test/lint).
+- `src/`: TypeScript source code.
+- `docs/`: gateway architecture and decisions.
+- `.github/workflows/ci.yml`: base pipeline (build/test/lint).
 
-## Inicio rapido
+## Quick start
 
-1. Ir a `src`.
-2. Copiar `.env.example` a `.env`.
-3. Instalar dependencias y levantar en modo dev.
+1. Go to `src`.
+2. Copy `.env.example` to `.env`.
+3. Install dependencies and start in dev mode.
 
 ## Endpoints
 
@@ -34,9 +34,9 @@ Gateway de entrada unico para AxiomNode.
 - `GET /v1/backoffice/users/leaderboard`
 - `GET /v1/backoffice/monitor/stats`
 
-## Variables clave
+## Key environment variables
 
-- `ALLOWED_ORIGINS` (incluye `http://localhost:7080` cuando backoffice corre en Docker)
+- `ALLOWED_ORIGINS` (includes `http://localhost:7080` when backoffice runs in Docker)
 - `BFF_MOBILE_URL`
 - `BFF_BACKOFFICE_URL`
-- `EDGE_API_TOKEN` (si se define, requiere `Authorization: Bearer <token>` en `/v1/*`)
+- `EDGE_API_TOKEN` (if set, requires `Authorization: Bearer <token>` on `/v1/*`)
