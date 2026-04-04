@@ -1,3 +1,3 @@
 # Guides
 
-Guia de evolucion de rutas publicas y versionado de API.
+Guide for public route evolution and API versioning strategy.

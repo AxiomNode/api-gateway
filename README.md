@@ -1,30 +1,27 @@
 # api-gateway
 
-Single entry gateway for AxiomNode.
+Single edge gateway for AxiomNode public traffic.
 
-## Purpose
+## Responsibilities
 
-- Expose a single public endpoint for the mobile app and backoffice.
-- Centralize auth, rate limiting, CORS, and edge observability.
-- Route traffic to BFFs and internal microservices.
+- Expose a unified entry point for mobile and backoffice clients.
+- Apply edge concerns: auth, CORS, rate limits, and request tracing.
+- Route requests to channel-specific BFF services.
 
-## Main responsibility
+## Repository structure
 
-- Single edge entry point for baseline security, routing, and cross-cutting policies.
+- `src/`: Fastify + TypeScript implementation.
+- `docs/`: architecture, guides, and operations notes.
+- `.github/workflows/ci.yml`: repository CI and deployment dispatch trigger.
 
-## Structure
+## Local development
 
-- `src/`: TypeScript source code.
-- `docs/`: gateway architecture and decisions.
-- `.github/workflows/ci.yml`: base pipeline (build/test/lint).
+1. `cd src`
+2. `cp .env.example .env`
+3. `npm install`
+4. `npm run dev`
 
-## Quick start
-
-1. Go to `src`.
-2. Copy `.env.example` to `.env`.
-3. Install dependencies and start in dev mode.
-
-## Endpoints
+## Main routes
 
 - `GET /health`
 - `GET /v1/mobile/games/quiz/random`
@@ -34,11 +31,26 @@ Single entry gateway for AxiomNode.
 - `GET /v1/backoffice/users/leaderboard`
 - `GET /v1/backoffice/monitor/stats`
 
+## CI/CD workflow behavior
+
+- `ci.yml`
+	- Trigger: push (`main`, `develop`), pull request, manual dispatch.
+	- Job `build-test-lint`: install, build, test, and lint.
+	- Job `trigger-platform-infra-build`:
+		- Runs on push to `main`.
+		- Dispatches `platform-infra/.github/workflows/build-push.yaml` with `service=api-gateway`.
+		- Requires `PLATFORM_INFRA_DISPATCH_TOKEN` in this repo.
+
+## Deployment automation chain
+
+1. Push to `main` in this repo.
+2. Repo CI dispatches image build in `platform-infra`.
+3. `platform-infra` build publishes GHCR images.
+4. `platform-infra` deploy workflow rolls out to `dev` only.
+
 ## Key environment variables
 
-- `ALLOWED_ORIGINS` (includes `http://localhost:7080` when backoffice runs in Docker)
+- `ALLOWED_ORIGINS`
 - `BFF_MOBILE_URL`
 - `BFF_BACKOFFICE_URL`
-- `EDGE_API_TOKEN` (if set, requires `Authorization: Bearer <token>` on `/v1/*`)
-
-Automation dev-only check: 2026-04-04T22:43:56Z
+- `EDGE_API_TOKEN`
