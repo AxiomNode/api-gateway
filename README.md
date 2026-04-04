@@ -40,3 +40,5 @@ Single entry gateway for AxiomNode.
 - `BFF_MOBILE_URL`
 - `BFF_BACKOFFICE_URL`
 - `EDGE_API_TOKEN` (if set, requires `Authorization: Bearer <token>` on `/v1/*`)
+
+Automation dev-only check: 2026-04-04T22:43:56Z
