@@ -43,7 +43,7 @@ describe("proxy routes", () => {
     await app.close();
   });
 
-  it("rejects requests when edge token is configured and missing", async () => {
+  it("keeps backoffice routes protected when edge token is configured and missing", async () => {
     const app = Fastify();
 
     const fetchMock = vi.fn();
@@ -61,7 +61,7 @@ describe("proxy routes", () => {
 
     const response = await app.inject({
       method: "GET",
-      url: "/v1/mobile/games/quiz/random?language=es",
+      url: "/v1/backoffice/services",
     });
 
     expect(response.statusCode).toBe(401);
@@ -114,6 +114,43 @@ describe("proxy routes", () => {
           "x-correlation-id": "corr-post",
         }),
       }),
+    );
+
+    vi.unstubAllGlobals();
+    await app.close();
+  });
+
+  it("allows mobile routes without edge token even when backoffice remains protected", async () => {
+    const app = Fastify();
+
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ source: "bff-mobile" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    await proxyRoutes(app, {
+      SERVICE_NAME: "api-gateway",
+      SERVICE_PORT: 7005,
+      NODE_ENV: "test",
+      ALLOWED_ORIGINS: "http://localhost:3000",
+      BFF_MOBILE_URL: "http://bff-mobile:7010",
+      BFF_BACKOFFICE_URL: "http://bff-backoffice:7011",
+      EDGE_API_TOKEN: "edge-secret",
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/mobile/games/quiz/random?language=es",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://bff-mobile:7010/v1/mobile/games/quiz/random?language=es",
+      expect.objectContaining({ method: "GET" }),
     );
 
     vi.unstubAllGlobals();

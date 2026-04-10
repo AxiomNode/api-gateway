@@ -89,37 +89,21 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.get("/v1/mobile/games/quiz/random", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
-      return;
-    }
-
     const url = buildUrl(config.BFF_MOBILE_URL, "/v1/mobile/games/quiz/random", request.query as Record<string, unknown>);
     await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, mobileBreaker);
   });
 
   app.get("/v1/mobile/games/wordpass/random", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
-      return;
-    }
-
     const url = buildUrl(config.BFF_MOBILE_URL, "/v1/mobile/games/wordpass/random", request.query as Record<string, unknown>);
     await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, mobileBreaker);
   });
 
   app.post("/v1/mobile/games/quiz/generate", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
-      return;
-    }
-
     const url = buildUrl(config.BFF_MOBILE_URL, "/v1/mobile/games/quiz/generate", {});
     await forwardRequest(request, reply, url, "POST", upstreamGenerationTimeoutMs, mobileBreaker);
   });
 
   app.post("/v1/mobile/games/wordpass/generate", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
-      return;
-    }
-
     const url = buildUrl(config.BFF_MOBILE_URL, "/v1/mobile/games/wordpass/generate", {});
     await forwardRequest(request, reply, url, "POST", upstreamGenerationTimeoutMs, mobileBreaker);
   });
