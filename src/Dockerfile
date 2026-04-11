@@ -16,5 +16,7 @@ ENV NODE_ENV=production
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY .env.example ./.env.example
+RUN chown -R node:node /app
+USER node
 EXPOSE 7005
 CMD ["node", "dist/app/server.js"]
