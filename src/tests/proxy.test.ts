@@ -157,6 +157,35 @@ describe("proxy routes", () => {
     await app.close();
   });
 
+  it("rejects invalid random-game query params before proxying", async () => {
+    const app = Fastify();
+
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await proxyRoutes(app, {
+      SERVICE_NAME: "api-gateway",
+      SERVICE_PORT: 7005,
+      NODE_ENV: "test",
+      ALLOWED_ORIGINS: "http://localhost:3000",
+      BFF_MOBILE_URL: "http://bff-mobile:7010",
+      BFF_BACKOFFICE_URL: "http://bff-backoffice:7011",
+      EDGE_API_TOKEN: "",
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/mobile/games/quiz/random?categoryId=",
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ message: "Invalid query parameters" });
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    vi.unstubAllGlobals();
+    await app.close();
+  });
+
   it("forwards backoffice service data insertion", async () => {
     const app = Fastify();
 
@@ -297,6 +326,38 @@ describe("proxy routes", () => {
         }),
       }),
     );
+
+    vi.unstubAllGlobals();
+    await app.close();
+  });
+
+  it("rejects invalid leaderboard query params before proxying", async () => {
+    const app = Fastify();
+
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await proxyRoutes(app, {
+      SERVICE_NAME: "api-gateway",
+      SERVICE_PORT: 7005,
+      NODE_ENV: "test",
+      ALLOWED_ORIGINS: "http://localhost:3000",
+      BFF_MOBILE_URL: "http://bff-mobile:7010",
+      BFF_BACKOFFICE_URL: "http://bff-backoffice:7011",
+      EDGE_API_TOKEN: "edge-secret",
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/backoffice/users/leaderboard?limit=9999",
+      headers: {
+        authorization: "Bearer edge-secret",
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ message: "Invalid query parameters" });
+    expect(fetchMock).not.toHaveBeenCalled();
 
     vi.unstubAllGlobals();
     await app.close();
