@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { CircuitBreaker, CircuitBreakerOpenError, buildUrl, forwardHttp } from "@axiomnode/shared-sdk-client/proxy";
+import { LeaderboardQuerySchema, RandomGameQuerySchema } from "@axiomnode/shared-sdk-client/contracts";
 
 import type { AppConfig } from "../config.js";
 
@@ -30,6 +31,13 @@ function getBreakerForUrl(baseUrl: string): CircuitBreaker {
     breakers.set(baseUrl, breaker);
   }
   return breaker;
+}
+
+function sendValidationError(reply: FastifyReply, error: { flatten: () => unknown }): FastifyReply {
+  return reply.code(400).send({
+    message: "Invalid query parameters",
+    errors: error.flatten(),
+  });
 }
 
 async function forwardRequest(
@@ -89,12 +97,22 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.get("/v1/mobile/games/quiz/random", async (request, reply) => {
-    const url = buildUrl(config.BFF_MOBILE_URL, "/v1/mobile/games/quiz/random", request.query as Record<string, unknown>);
+    const parsedQuery = RandomGameQuerySchema.safeParse(request.query ?? {});
+    if (!parsedQuery.success) {
+      return sendValidationError(reply, parsedQuery.error);
+    }
+
+    const url = buildUrl(config.BFF_MOBILE_URL, "/v1/mobile/games/quiz/random", parsedQuery.data);
     await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, mobileBreaker);
   });
 
   app.get("/v1/mobile/games/wordpass/random", async (request, reply) => {
-    const url = buildUrl(config.BFF_MOBILE_URL, "/v1/mobile/games/wordpass/random", request.query as Record<string, unknown>);
+    const parsedQuery = RandomGameQuerySchema.safeParse(request.query ?? {});
+    if (!parsedQuery.success) {
+      return sendValidationError(reply, parsedQuery.error);
+    }
+
+    const url = buildUrl(config.BFF_MOBILE_URL, "/v1/mobile/games/wordpass/random", parsedQuery.data);
     await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, mobileBreaker);
   });
 
@@ -113,7 +131,12 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
       return;
     }
 
-    const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/users/leaderboard", request.query as Record<string, unknown>);
+    const parsedQuery = LeaderboardQuerySchema.safeParse(request.query ?? {});
+    if (!parsedQuery.success) {
+      return sendValidationError(reply, parsedQuery.error);
+    }
+
+    const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/users/leaderboard", parsedQuery.data);
     await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, backofficeBreaker);
   });
 
