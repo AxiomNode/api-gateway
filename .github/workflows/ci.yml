@@ -60,6 +60,8 @@ jobs:
         working-directory: api-gateway/src
       - run: npm run lint
         working-directory: api-gateway/src
+      - run: npm audit --omit=dev --audit-level=high
+        working-directory: api-gateway/src
 
   trigger-platform-infra-build:
     name: Trigger Platform Infra Build
