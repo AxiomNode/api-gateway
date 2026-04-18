@@ -7,6 +7,7 @@ Single edge gateway for AxiomNode public traffic.
 - Expose a unified entry point for mobile and backoffice clients.
 - Apply edge concerns: auth, CORS, rate limits, and request tracing.
 - Route requests to channel-specific BFF services.
+- Provide the stable internal ai-engine upstream used by cluster services when ai-engine runs externally on an optional workstation.
 
 ## Repository structure
 
@@ -30,6 +31,16 @@ Single edge gateway for AxiomNode public traffic.
 - `POST /v1/mobile/games/wordpass/generate`
 - `GET /v1/backoffice/users/leaderboard`
 - `GET /v1/backoffice/monitor/stats`
+- `POST /internal/ai-engine/generate/quiz`
+- `POST /internal/ai-engine/generate/word-pass`
+- `POST /internal/ai-engine/ingest/quiz`
+- `POST /internal/ai-engine/ingest/word-pass`
+- `GET /internal/ai-engine/catalogs`
+- `GET /internal/ai-engine/health`
+- `GET /internal/ai-engine/stats`
+- `GET|PUT|DELETE /internal/admin/ai-engine/target`
+
+The ai-engine target managed through `/internal/admin/ai-engine/target` is intentionally not restricted by `ALLOWED_ROUTING_TARGET_HOSTS`. That allowlist still applies to generic service-target overrides, but ai-engine must remain movable to any reachable host chosen from backoffice.
 
 ## CI/CD workflow behavior
 
@@ -54,3 +65,8 @@ Single edge gateway for AxiomNode public traffic.
 - `BFF_MOBILE_URL`
 - `BFF_BACKOFFICE_URL`
 - `EDGE_API_TOKEN`
+- `AI_ENGINE_API_URL`
+- `AI_ENGINE_STATS_URL`
+- `GATEWAY_ROUTING_STATE_FILE`
+- `ALLOWED_ROUTING_TARGET_HOSTS`
+- `API_GATEWAY_ADMIN_TOKEN`
