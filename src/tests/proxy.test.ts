@@ -1,9 +1,37 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
 import Fastify from "fastify";
 import { proxyRoutes } from "../app/routes/proxy.js";
 
+let tempStateDir = "";
+let defaultStateFile = "";
+
+function withStateFile<T extends Record<string, unknown>>(config: T): T & { GATEWAY_ROUTING_STATE_FILE: string } {
+  return {
+    ...config,
+    GATEWAY_ROUTING_STATE_FILE: defaultStateFile,
+  };
+}
+
 describe("proxy routes", () => {
+  beforeEach(async () => {
+    tempStateDir = await mkdtemp(path.join(os.tmpdir(), "axiomnode-gateway-test-"));
+    defaultStateFile = path.join(tempStateDir, "routing-state.json");
+  });
+
+  afterEach(async () => {
+    vi.unstubAllGlobals();
+    if (tempStateDir) {
+      await rm(tempStateDir, { recursive: true, force: true });
+    }
+    tempStateDir = "";
+    defaultStateFile = "";
+  });
+
   it("forwards mobile quiz random to bff-mobile", async () => {
     const app = Fastify();
 
@@ -16,7 +44,7 @@ describe("proxy routes", () => {
 
     vi.stubGlobal("fetch", fetchMock);
 
-    await proxyRoutes(app, {
+    await proxyRoutes(app, withStateFile({
       SERVICE_NAME: "api-gateway",
       SERVICE_PORT: 7005,
       NODE_ENV: "test",
@@ -24,7 +52,7 @@ describe("proxy routes", () => {
       BFF_MOBILE_URL: "http://bff-mobile:7010",
       BFF_BACKOFFICE_URL: "http://bff-backoffice:7011",
       EDGE_API_TOKEN: "",
-    });
+    }));
 
     const response = await app.inject({
       method: "GET",
@@ -39,7 +67,6 @@ describe("proxy routes", () => {
       expect.objectContaining({ method: "GET" }),
     );
 
-    vi.unstubAllGlobals();
     await app.close();
   });
 
@@ -49,7 +76,7 @@ describe("proxy routes", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
 
-    await proxyRoutes(app, {
+    await proxyRoutes(app, withStateFile({
       SERVICE_NAME: "api-gateway",
       SERVICE_PORT: 7005,
       NODE_ENV: "test",
@@ -57,7 +84,7 @@ describe("proxy routes", () => {
       BFF_MOBILE_URL: "http://bff-mobile:7010",
       BFF_BACKOFFICE_URL: "http://bff-backoffice:7011",
       EDGE_API_TOKEN: "edge-secret",
-    });
+    }));
 
     const response = await app.inject({
       method: "GET",
@@ -67,7 +94,6 @@ describe("proxy routes", () => {
     expect(response.statusCode).toBe(401);
     expect(fetchMock).not.toHaveBeenCalled();
 
-    vi.unstubAllGlobals();
     await app.close();
   });
 
@@ -83,7 +109,7 @@ describe("proxy routes", () => {
 
     vi.stubGlobal("fetch", fetchMock);
 
-    await proxyRoutes(app, {
+    await proxyRoutes(app, withStateFile({
       SERVICE_NAME: "api-gateway",
       SERVICE_PORT: 7005,
       NODE_ENV: "test",
@@ -91,7 +117,7 @@ describe("proxy routes", () => {
       BFF_MOBILE_URL: "http://bff-mobile:7010",
       BFF_BACKOFFICE_URL: "http://bff-backoffice:7011",
       EDGE_API_TOKEN: "edge-secret",
-    });
+    }));
 
     const response = await app.inject({
       method: "POST",
@@ -116,7 +142,6 @@ describe("proxy routes", () => {
       }),
     );
 
-    vi.unstubAllGlobals();
     await app.close();
   });
 
@@ -132,7 +157,7 @@ describe("proxy routes", () => {
 
     vi.stubGlobal("fetch", fetchMock);
 
-    await proxyRoutes(app, {
+    await proxyRoutes(app, withStateFile({
       SERVICE_NAME: "api-gateway",
       SERVICE_PORT: 7005,
       NODE_ENV: "test",
@@ -140,7 +165,7 @@ describe("proxy routes", () => {
       BFF_MOBILE_URL: "http://bff-mobile:7010",
       BFF_BACKOFFICE_URL: "http://bff-backoffice:7011",
       EDGE_API_TOKEN: "edge-secret",
-    });
+    }));
 
     const response = await app.inject({
       method: "GET",
@@ -153,7 +178,6 @@ describe("proxy routes", () => {
       expect.objectContaining({ method: "GET" }),
     );
 
-    vi.unstubAllGlobals();
     await app.close();
   });
 
@@ -163,7 +187,7 @@ describe("proxy routes", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
 
-    await proxyRoutes(app, {
+    await proxyRoutes(app, withStateFile({
       SERVICE_NAME: "api-gateway",
       SERVICE_PORT: 7005,
       NODE_ENV: "test",
@@ -171,7 +195,7 @@ describe("proxy routes", () => {
       BFF_MOBILE_URL: "http://bff-mobile:7010",
       BFF_BACKOFFICE_URL: "http://bff-backoffice:7011",
       EDGE_API_TOKEN: "",
-    });
+    }));
 
     const response = await app.inject({
       method: "GET",
@@ -182,7 +206,6 @@ describe("proxy routes", () => {
     expect(response.json()).toMatchObject({ message: "Invalid query parameters" });
     expect(fetchMock).not.toHaveBeenCalled();
 
-    vi.unstubAllGlobals();
     await app.close();
   });
 
@@ -198,7 +221,7 @@ describe("proxy routes", () => {
 
     vi.stubGlobal("fetch", fetchMock);
 
-    await proxyRoutes(app, {
+    await proxyRoutes(app, withStateFile({
       SERVICE_NAME: "api-gateway",
       SERVICE_PORT: 7005,
       NODE_ENV: "test",
@@ -206,7 +229,7 @@ describe("proxy routes", () => {
       BFF_MOBILE_URL: "http://bff-mobile:7010",
       BFF_BACKOFFICE_URL: "http://bff-backoffice:7011",
       EDGE_API_TOKEN: "edge-secret",
-    });
+    }));
 
     const response = await app.inject({
       method: "POST",
@@ -229,7 +252,6 @@ describe("proxy routes", () => {
       expect.objectContaining({ method: "POST" }),
     );
 
-    vi.unstubAllGlobals();
     await app.close();
   });
 
@@ -245,7 +267,7 @@ describe("proxy routes", () => {
 
     vi.stubGlobal("fetch", fetchMock);
 
-    await proxyRoutes(app, {
+    await proxyRoutes(app, withStateFile({
       SERVICE_NAME: "api-gateway",
       SERVICE_PORT: 7005,
       NODE_ENV: "test",
@@ -253,7 +275,7 @@ describe("proxy routes", () => {
       BFF_MOBILE_URL: "http://bff-mobile:7010",
       BFF_BACKOFFICE_URL: "http://bff-backoffice:7011",
       EDGE_API_TOKEN: "edge-secret",
-    });
+    }));
 
     const response = await app.inject({
       method: "GET",
@@ -269,7 +291,6 @@ describe("proxy routes", () => {
       expect.objectContaining({ method: "GET" }),
     );
 
-    vi.unstubAllGlobals();
     await app.close();
   });
 
@@ -285,7 +306,7 @@ describe("proxy routes", () => {
 
     vi.stubGlobal("fetch", fetchMock);
 
-    await proxyRoutes(app, {
+    await proxyRoutes(app, withStateFile({
       SERVICE_NAME: "api-gateway",
       SERVICE_PORT: 7005,
       NODE_ENV: "test",
@@ -293,7 +314,7 @@ describe("proxy routes", () => {
       BFF_MOBILE_URL: "http://bff-mobile:7010",
       BFF_BACKOFFICE_URL: "http://bff-backoffice:7011",
       EDGE_API_TOKEN: "edge-secret",
-    });
+    }));
 
     const response = await app.inject({
       method: "POST",
@@ -327,7 +348,6 @@ describe("proxy routes", () => {
       }),
     );
 
-    vi.unstubAllGlobals();
     await app.close();
   });
 
@@ -337,7 +357,7 @@ describe("proxy routes", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
 
-    await proxyRoutes(app, {
+    await proxyRoutes(app, withStateFile({
       SERVICE_NAME: "api-gateway",
       SERVICE_PORT: 7005,
       NODE_ENV: "test",
@@ -345,7 +365,7 @@ describe("proxy routes", () => {
       BFF_MOBILE_URL: "http://bff-mobile:7010",
       BFF_BACKOFFICE_URL: "http://bff-backoffice:7011",
       EDGE_API_TOKEN: "edge-secret",
-    });
+    }));
 
     const response = await app.inject({
       method: "GET",
@@ -359,7 +379,6 @@ describe("proxy routes", () => {
     expect(response.json()).toMatchObject({ message: "Invalid query parameters" });
     expect(fetchMock).not.toHaveBeenCalled();
 
-    vi.unstubAllGlobals();
     await app.close();
   });
 
@@ -375,7 +394,7 @@ describe("proxy routes", () => {
 
     vi.stubGlobal("fetch", fetchMock);
 
-    await proxyRoutes(app, {
+    await proxyRoutes(app, withStateFile({
       SERVICE_NAME: "api-gateway",
       SERVICE_PORT: 7005,
       NODE_ENV: "test",
@@ -383,7 +402,7 @@ describe("proxy routes", () => {
       BFF_MOBILE_URL: "http://bff-mobile:7010",
       BFF_BACKOFFICE_URL: "http://bff-backoffice:7011",
       EDGE_API_TOKEN: "edge-secret",
-    });
+    }));
 
     const response = await app.inject({
       method: "DELETE",
@@ -399,7 +418,162 @@ describe("proxy routes", () => {
       expect.objectContaining({ method: "DELETE" }),
     );
 
-    vi.unstubAllGlobals();
+    await app.close();
+  });
+
+  it("forwards internal ai-engine generation through the persisted gateway target", async () => {
+    const app = Fastify();
+
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    await proxyRoutes(app, withStateFile({
+      SERVICE_NAME: "api-gateway",
+      SERVICE_PORT: 7005,
+      NODE_ENV: "test",
+      ALLOWED_ORIGINS: "http://localhost:3000",
+      BFF_MOBILE_URL: "http://bff-mobile:7010",
+      BFF_BACKOFFICE_URL: "http://bff-backoffice:7011",
+      AI_ENGINE_API_URL: "http://ai-engine-api:8001",
+      AI_ENGINE_STATS_URL: "http://ai-engine-stats:8000",
+      EDGE_API_TOKEN: "",
+    }));
+
+    await app.inject({
+      method: "PUT",
+      url: "/internal/admin/ai-engine/target",
+      payload: {
+        host: "192.168.1.50",
+        protocol: "http",
+        apiPort: 17001,
+        statsPort: 17000,
+      },
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/internal/ai-engine/generate/quiz?query=planetas&language=es",
+      headers: {
+        "x-api-key": "games-key",
+        "x-correlation-id": "corr-ai-1",
+      },
+      payload: {},
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://192.168.1.50:17001/generate/quiz?query=planetas&language=es",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          "x-api-key": "games-key",
+          "x-correlation-id": "corr-ai-1",
+        }),
+      }),
+    );
+
+    await app.close();
+  });
+
+  it("persists ai-engine target overrides in the gateway", async () => {
+    const firstApp = Fastify();
+    const secondApp = Fastify();
+
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    const config = withStateFile({
+      SERVICE_NAME: "api-gateway",
+      SERVICE_PORT: 7005,
+      NODE_ENV: "test",
+      ALLOWED_ORIGINS: "http://localhost:3000",
+      BFF_MOBILE_URL: "http://bff-mobile:7010",
+      BFF_BACKOFFICE_URL: "http://bff-backoffice:7011",
+      AI_ENGINE_API_URL: "http://ai-engine-api:8001",
+      AI_ENGINE_STATS_URL: "http://ai-engine-stats:8000",
+      EDGE_API_TOKEN: "",
+    });
+
+    await proxyRoutes(firstApp, config);
+    await firstApp.inject({
+      method: "PUT",
+      url: "/internal/admin/ai-engine/target",
+      payload: {
+        host: "10.0.0.12",
+        protocol: "http",
+        apiPort: 17001,
+        statsPort: 17000,
+        label: "gpu workstation",
+      },
+    });
+    await firstApp.close();
+
+    await proxyRoutes(secondApp, config);
+    const response = await secondApp.inject({
+      method: "GET",
+      url: "/internal/admin/ai-engine/target",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      source: "override",
+      host: "10.0.0.12",
+      apiBaseUrl: "http://10.0.0.12:17001",
+      statsBaseUrl: "http://10.0.0.12:17000",
+      label: "gpu workstation",
+    });
+
+    await secondApp.close();
+  });
+
+  it("allows ai-engine targets outside the generic allowlist in the gateway", async () => {
+    const app = Fastify();
+
+    vi.stubGlobal("fetch", vi.fn());
+
+    await proxyRoutes(app, withStateFile({
+      SERVICE_NAME: "api-gateway",
+      SERVICE_PORT: 7005,
+      NODE_ENV: "test",
+      ALLOWED_ORIGINS: "http://localhost:3000",
+      BFF_MOBILE_URL: "http://bff-mobile:7010",
+      BFF_BACKOFFICE_URL: "http://bff-backoffice:7011",
+      AI_ENGINE_API_URL: "http://ai-engine-api:8001",
+      AI_ENGINE_STATS_URL: "http://ai-engine-stats:8000",
+      EDGE_API_TOKEN: "",
+      ALLOWED_ROUTING_TARGET_HOSTS: "localhost,127.0.0.1,192.168.0.0/16",
+    }));
+
+    const response = await app.inject({
+      method: "PUT",
+      url: "/internal/admin/ai-engine/target",
+      payload: {
+        host: "example.com",
+        apiPort: 17001,
+        statsPort: 17000,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      source: "override",
+      host: "example.com",
+      apiBaseUrl: "http://example.com:17001",
+      statsBaseUrl: "http://example.com:17000",
+    });
+
     await app.close();
   });
 });

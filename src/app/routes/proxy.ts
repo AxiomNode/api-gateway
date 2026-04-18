@@ -1,10 +1,185 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { CircuitBreaker, CircuitBreakerOpenError, buildUrl, forwardHttp } from "@axiomnode/shared-sdk-client/proxy";
 import { LeaderboardQuerySchema, RandomGameQuerySchema } from "@axiomnode/shared-sdk-client/contracts";
+import { z } from "zod";
 
 import type { AppConfig } from "../config.js";
+import { RoutingStateStore } from "../services/routingStateStore.js";
 
 /** @module proxy — Reverse-proxy routes forwarding requests to BFF-Mobile and BFF-Backoffice with circuit breakers. */
+
+const AiEngineTargetSchema = z.object({
+  host: z.string().trim().min(1).max(255),
+  protocol: z.enum(["http", "https"]).default("http"),
+  apiPort: z.coerce.number().int().min(1).max(65535).default(7001),
+  statsPort: z.coerce.number().int().min(1).max(65535).default(7000),
+  label: z.string().trim().max(80).optional(),
+});
+
+function normalizeAiEngineHost(raw: string): string {
+  const trimmed = raw.trim().replace(/^https?:\/\//i, "").replace(/\/+$/, "");
+  const withoutPath = trimmed.split("/")[0] ?? "";
+  const withoutPort = withoutPath.replace(/:\d+$/, "");
+
+  if (!withoutPort || !/^[a-zA-Z0-9.-]+$/.test(withoutPort)) {
+    throw new Error("host must be a valid hostname or IPv4 address");
+  }
+
+  return withoutPort;
+}
+
+function buildAiEngineBaseUrl(protocol: "http" | "https", host: string, port: number): string {
+  return `${protocol}://${host}:${port}`;
+}
+
+function parseIpv4Address(host: string): number | null {
+  const octets = host.split(".");
+  if (octets.length !== 4) {
+    return null;
+  }
+
+  const numbers = octets.map((part) => Number(part));
+  if (numbers.some((value) => !Number.isInteger(value) || value < 0 || value > 255)) {
+    return null;
+  }
+
+  return ((numbers[0] << 24) >>> 0) + (numbers[1] << 16) + (numbers[2] << 8) + numbers[3];
+}
+
+function isIpv4InCidr(host: string, cidr: string): boolean {
+  const [network, prefixRaw] = cidr.split("/");
+  const ip = parseIpv4Address(host);
+  const networkIp = parseIpv4Address(network ?? "");
+  const prefix = Number(prefixRaw);
+
+  if (ip === null || networkIp === null || !Number.isInteger(prefix) || prefix < 0 || prefix > 32) {
+    return false;
+  }
+
+  if (prefix === 0) {
+    return true;
+  }
+
+  const mask = (0xffffffff << (32 - prefix)) >>> 0;
+  return (ip & mask) === (networkIp & mask);
+}
+
+function isAllowedRoutingTargetHost(config: AppConfig, host: string): boolean {
+  const policy = config.ALLOWED_ROUTING_TARGET_HOSTS?.trim();
+  if (!policy) {
+    return true;
+  }
+
+  const normalizedHost = host.trim().toLowerCase();
+  const rules = policy
+    .split(",")
+    .map((entry) => entry.trim().toLowerCase())
+    .filter((entry) => entry.length > 0);
+
+  return rules.some((rule) => {
+    if (rule.includes("/")) {
+      return isIpv4InCidr(normalizedHost, rule);
+    }
+
+    if (rule.startsWith("*.")) {
+      return normalizedHost === rule.slice(2) || normalizedHost.endsWith(rule.slice(1));
+    }
+
+    return normalizedHost === rule;
+  });
+}
+
+function assertAllowedRoutingTargetHost(config: AppConfig, host: string): void {
+  if (!isAllowedRoutingTargetHost(config, host)) {
+    throw new Error(`host '${host}' is not allowed by ALLOWED_ROUTING_TARGET_HOSTS`);
+  }
+}
+
+function parseBaseUrl(url: string): {
+  host: string | null;
+  protocol: "http" | "https" | null;
+  port: number | null;
+} {
+  try {
+    const parsed = new URL(url);
+    const protocol = parsed.protocol === "https:" ? "https" : parsed.protocol === "http:" ? "http" : null;
+    const fallbackPort = protocol === "https" ? 443 : protocol === "http" ? 80 : NaN;
+    const parsedPort = parsed.port ? Number(parsed.port) : fallbackPort;
+
+    return {
+      host: parsed.hostname || null,
+      protocol,
+      port: Number.isFinite(parsedPort) ? parsedPort : null,
+    };
+  } catch {
+    return {
+      host: null,
+      protocol: null,
+      port: null,
+    };
+  }
+}
+
+function getAiEngineApiBaseUrl(config: AppConfig, routingStore: RoutingStateStore): string {
+  return routingStore.get("ai-engine-api")?.baseUrl ?? config.AI_ENGINE_API_URL ?? "http://localhost:7001";
+}
+
+function getAiEngineStatsBaseUrl(config: AppConfig, routingStore: RoutingStateStore): string {
+  return routingStore.get("ai-engine-stats")?.baseUrl ?? config.AI_ENGINE_STATS_URL ?? "http://localhost:7000";
+}
+
+function getAiEngineTarget(config: AppConfig, routingStore: RoutingStateStore) {
+  const apiBaseUrl = getAiEngineApiBaseUrl(config, routingStore);
+  const statsBaseUrl = getAiEngineStatsBaseUrl(config, routingStore);
+  const apiParsed = parseBaseUrl(apiBaseUrl);
+  const statsParsed = parseBaseUrl(statsBaseUrl);
+  const apiOverride = routingStore.get("ai-engine-api");
+  const statsOverride = routingStore.get("ai-engine-stats");
+  const activeOverride = apiOverride ?? statsOverride;
+
+  return {
+    source: activeOverride ? ("override" as const) : ("env" as const),
+    label: activeOverride?.label ?? null,
+    host: apiParsed.host ?? statsParsed.host,
+    protocol: apiParsed.protocol ?? statsParsed.protocol,
+    apiPort: apiParsed.port,
+    statsPort: statsParsed.port,
+    apiBaseUrl,
+    statsBaseUrl,
+    updatedAt: activeOverride?.updatedAt ?? null,
+  };
+}
+
+async function applyAiEngineTarget(config: AppConfig, routingStore: RoutingStateStore, input: z.infer<typeof AiEngineTargetSchema>): Promise<void> {
+  const host = normalizeAiEngineHost(input.host);
+  const label = input.label?.trim() || undefined;
+  const updatedAt = new Date().toISOString();
+
+  await routingStore.set("ai-engine-api", {
+    baseUrl: buildAiEngineBaseUrl(input.protocol, host, input.apiPort),
+    label,
+    updatedAt,
+  });
+  await routingStore.set("ai-engine-stats", {
+    baseUrl: buildAiEngineBaseUrl(input.protocol, host, input.statsPort),
+    label,
+    updatedAt,
+  });
+}
+
+async function resetAiEngineTarget(routingStore: RoutingStateStore): Promise<void> {
+  await routingStore.delete("ai-engine-api");
+  await routingStore.delete("ai-engine-stats");
+}
+
+function isGatewayAdminAuthorized(request: FastifyRequest, config: AppConfig): boolean {
+  const token = config.API_GATEWAY_ADMIN_TOKEN?.trim();
+  if (!token) {
+    return true;
+  }
+
+  return request.headers.authorization === `Bearer ${token}`;
+}
 
 function checkEdgeAuth(request: FastifyRequest, reply: FastifyReply, edgeApiToken: string): boolean {
   if (!edgeApiToken) {
@@ -77,6 +252,78 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   const upstreamGenerationTimeoutMs = config.UPSTREAM_GENERATION_TIMEOUT_MS ?? 60000;
   const mobileBreaker = getBreakerForUrl(config.BFF_MOBILE_URL);
   const backofficeBreaker = getBreakerForUrl(config.BFF_BACKOFFICE_URL);
+  const routingStore = new RoutingStateStore(config);
+  await routingStore.load();
+
+  app.get("/internal/admin/ai-engine/target", async (request, reply) => {
+    if (!isGatewayAdminAuthorized(request, config)) {
+      return reply.code(401).send({ error: "Unauthorized" });
+    }
+
+    return reply.send(getAiEngineTarget(config, routingStore));
+  });
+
+  app.put("/internal/admin/ai-engine/target", async (request, reply) => {
+    if (!isGatewayAdminAuthorized(request, config)) {
+      return reply.code(401).send({ error: "Unauthorized" });
+    }
+
+    const parsed = AiEngineTargetSchema.safeParse(request.body ?? {});
+    if (!parsed.success) {
+      return reply.code(400).send({ message: "Invalid payload", errors: parsed.error.flatten() });
+    }
+
+    try {
+      await applyAiEngineTarget(config, routingStore, parsed.data);
+      return reply.send(getAiEngineTarget(config, routingStore));
+    } catch (error) {
+      return reply.code(400).send({ message: error instanceof Error ? error.message : "Invalid ai-engine target" });
+    }
+  });
+
+  app.delete("/internal/admin/ai-engine/target", async (request, reply) => {
+    if (!isGatewayAdminAuthorized(request, config)) {
+      return reply.code(401).send({ error: "Unauthorized" });
+    }
+
+    await resetAiEngineTarget(routingStore);
+    return reply.send(getAiEngineTarget(config, routingStore));
+  });
+
+  app.post("/internal/ai-engine/generate/quiz", async (request, reply) => {
+    const url = buildUrl(getAiEngineApiBaseUrl(config, routingStore), "/generate/quiz", request.query as Record<string, unknown>);
+    await forwardRequest(request, reply, url, "POST", upstreamGenerationTimeoutMs, getBreakerForUrl(getAiEngineApiBaseUrl(config, routingStore)));
+  });
+
+  app.post("/internal/ai-engine/generate/word-pass", async (request, reply) => {
+    const url = buildUrl(getAiEngineApiBaseUrl(config, routingStore), "/generate/word-pass", request.query as Record<string, unknown>);
+    await forwardRequest(request, reply, url, "POST", upstreamGenerationTimeoutMs, getBreakerForUrl(getAiEngineApiBaseUrl(config, routingStore)));
+  });
+
+  app.post("/internal/ai-engine/ingest/quiz", async (request, reply) => {
+    const url = buildUrl(getAiEngineApiBaseUrl(config, routingStore), "/ingest/quiz", {});
+    await forwardRequest(request, reply, url, "POST", upstreamGenerationTimeoutMs, getBreakerForUrl(getAiEngineApiBaseUrl(config, routingStore)));
+  });
+
+  app.post("/internal/ai-engine/ingest/word-pass", async (request, reply) => {
+    const url = buildUrl(getAiEngineApiBaseUrl(config, routingStore), "/ingest/word-pass", {});
+    await forwardRequest(request, reply, url, "POST", upstreamGenerationTimeoutMs, getBreakerForUrl(getAiEngineApiBaseUrl(config, routingStore)));
+  });
+
+  app.get("/internal/ai-engine/catalogs", async (request, reply) => {
+    const url = buildUrl(getAiEngineApiBaseUrl(config, routingStore), "/catalogs", {});
+    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, getBreakerForUrl(getAiEngineApiBaseUrl(config, routingStore)));
+  });
+
+  app.get("/internal/ai-engine/health", async (request, reply) => {
+    const url = buildUrl(getAiEngineApiBaseUrl(config, routingStore), "/health", {});
+    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, getBreakerForUrl(getAiEngineApiBaseUrl(config, routingStore)));
+  });
+
+  app.get("/internal/ai-engine/stats", async (request, reply) => {
+    const url = buildUrl(getAiEngineStatsBaseUrl(config, routingStore), "/stats", request.query as Record<string, unknown>);
+    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, getBreakerForUrl(getAiEngineStatsBaseUrl(config, routingStore)));
+  });
 
   app.post("/v1/backoffice/auth/session", async (request, reply) => {
     if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
