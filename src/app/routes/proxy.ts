@@ -255,11 +255,16 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   const routingStore = new RoutingStateStore(config);
   await routingStore.load();
 
+  const refreshRoutingState = async (): Promise<void> => {
+    await routingStore.load();
+  };
+
   app.get("/internal/admin/ai-engine/target", async (request, reply) => {
     if (!isGatewayAdminAuthorized(request, config)) {
       return reply.code(401).send({ error: "Unauthorized" });
     }
 
+    await refreshRoutingState();
     return reply.send(getAiEngineTarget(config, routingStore));
   });
 
@@ -274,6 +279,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
     }
 
     try {
+      await refreshRoutingState();
       await applyAiEngineTarget(config, routingStore, parsed.data);
       return reply.send(getAiEngineTarget(config, routingStore));
     } catch (error) {
@@ -286,41 +292,49 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
       return reply.code(401).send({ error: "Unauthorized" });
     }
 
+    await refreshRoutingState();
     await resetAiEngineTarget(routingStore);
     return reply.send(getAiEngineTarget(config, routingStore));
   });
 
   app.post("/internal/ai-engine/generate/quiz", async (request, reply) => {
+    await refreshRoutingState();
     const url = buildUrl(getAiEngineApiBaseUrl(config, routingStore), "/generate/quiz", request.query as Record<string, unknown>);
     await forwardRequest(request, reply, url, "POST", upstreamGenerationTimeoutMs, getBreakerForUrl(getAiEngineApiBaseUrl(config, routingStore)));
   });
 
   app.post("/internal/ai-engine/generate/word-pass", async (request, reply) => {
+    await refreshRoutingState();
     const url = buildUrl(getAiEngineApiBaseUrl(config, routingStore), "/generate/word-pass", request.query as Record<string, unknown>);
     await forwardRequest(request, reply, url, "POST", upstreamGenerationTimeoutMs, getBreakerForUrl(getAiEngineApiBaseUrl(config, routingStore)));
   });
 
   app.post("/internal/ai-engine/ingest/quiz", async (request, reply) => {
+    await refreshRoutingState();
     const url = buildUrl(getAiEngineApiBaseUrl(config, routingStore), "/ingest/quiz", {});
     await forwardRequest(request, reply, url, "POST", upstreamGenerationTimeoutMs, getBreakerForUrl(getAiEngineApiBaseUrl(config, routingStore)));
   });
 
   app.post("/internal/ai-engine/ingest/word-pass", async (request, reply) => {
+    await refreshRoutingState();
     const url = buildUrl(getAiEngineApiBaseUrl(config, routingStore), "/ingest/word-pass", {});
     await forwardRequest(request, reply, url, "POST", upstreamGenerationTimeoutMs, getBreakerForUrl(getAiEngineApiBaseUrl(config, routingStore)));
   });
 
   app.get("/internal/ai-engine/catalogs", async (request, reply) => {
+    await refreshRoutingState();
     const url = buildUrl(getAiEngineApiBaseUrl(config, routingStore), "/catalogs", {});
     await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, getBreakerForUrl(getAiEngineApiBaseUrl(config, routingStore)));
   });
 
   app.get("/internal/ai-engine/health", async (request, reply) => {
+    await refreshRoutingState();
     const url = buildUrl(getAiEngineApiBaseUrl(config, routingStore), "/health", {});
     await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, getBreakerForUrl(getAiEngineApiBaseUrl(config, routingStore)));
   });
 
   app.get("/internal/ai-engine/stats", async (request, reply) => {
+    await refreshRoutingState();
     const url = buildUrl(getAiEngineStatsBaseUrl(config, routingStore), "/stats", request.query as Record<string, unknown>);
     await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, getBreakerForUrl(getAiEngineStatsBaseUrl(config, routingStore)));
   });
