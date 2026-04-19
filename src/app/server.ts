@@ -23,7 +23,7 @@ async function buildServer() {
   const allowedOrigins = config.ALLOWED_ORIGINS.split(",").map((v) => v.trim());
   await app.register(cors, {
     origin: allowedOrigins,
-    methods: ["GET", "HEAD", "POST", "PATCH", "OPTIONS"],
+    methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   });
 
   app.addHook("onRequest", async (request) => {

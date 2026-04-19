@@ -4,6 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import cors from "@fastify/cors";
 import Fastify from "fastify";
 import { proxyRoutes } from "../app/routes/proxy.js";
 
@@ -93,6 +94,40 @@ describe("proxy routes", () => {
 
     expect(response.statusCode).toBe(401);
     expect(fetchMock).not.toHaveBeenCalled();
+
+    await app.close();
+  });
+
+  it("allows CORS preflight for ai-engine preset updates", async () => {
+    const app = Fastify();
+
+    await app.register(cors, {
+      origin: ["http://localhost:3000"],
+      methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    });
+
+    await proxyRoutes(app, withStateFile({
+      SERVICE_NAME: "api-gateway",
+      SERVICE_PORT: 7005,
+      NODE_ENV: "test",
+      ALLOWED_ORIGINS: "http://localhost:3000",
+      BFF_MOBILE_URL: "http://bff-mobile:7010",
+      BFF_BACKOFFICE_URL: "http://bff-backoffice:7011",
+      EDGE_API_TOKEN: "edge-secret",
+    }));
+
+    const response = await app.inject({
+      method: "OPTIONS",
+      url: "/v1/backoffice/ai-engine/presets/workstation-public",
+      headers: {
+        origin: "http://localhost:3000",
+        "access-control-request-method": "PUT",
+      },
+    });
+
+    expect(response.statusCode).toBe(204);
+    expect(response.headers["access-control-allow-methods"]).toContain("PUT");
+    expect(response.headers["access-control-allow-methods"]).toContain("DELETE");
 
     await app.close();
   });
