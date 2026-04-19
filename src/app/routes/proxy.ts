@@ -1,5 +1,12 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { CircuitBreaker, CircuitBreakerOpenError, buildUrl, forwardHttp } from "@axiomnode/shared-sdk-client/proxy";
+import {
+  CircuitBreaker,
+  CircuitBreakerOpenError,
+  UpstreamTimeoutError,
+  buildUrl,
+  extractForwardHeaders,
+  forwardHttp,
+} from "@axiomnode/shared-sdk-client/proxy";
 import { LeaderboardQuerySchema, RandomGameQuerySchema } from "@axiomnode/shared-sdk-client/contracts";
 import { z } from "zod";
 
@@ -156,20 +163,51 @@ async function forwardRequest(
   request: FastifyRequest,
   reply: FastifyReply,
   targetUrl: string,
-  method: "GET" | "POST" | "PATCH" | "DELETE",
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
   timeoutMs: number,
   breaker: CircuitBreaker,
 ): Promise<void> {
   try {
-    const result = await breaker.call(() =>
-      forwardHttp({
-        targetUrl,
-        method,
-        requestHeaders: request.headers as Record<string, string | undefined>,
-        body: request.body,
-        timeoutMs,
-      }),
-    );
+    const result = await breaker.call(async () => {
+      if (method !== "PUT") {
+        return forwardHttp({
+          targetUrl,
+          method,
+          requestHeaders: request.headers as Record<string, string | undefined>,
+          body: request.body,
+          timeoutMs,
+        });
+      }
+
+      const controller = new AbortController();
+      const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
+
+      try {
+        const response = await fetch(targetUrl, {
+          method,
+          headers: extractForwardHeaders(request.headers as Record<string, string | undefined>, true),
+          body: request.body !== undefined ? JSON.stringify(request.body) : undefined,
+          signal: controller.signal,
+        });
+        const contentType = response.headers.get("content-type") ?? "application/json";
+        const payload = contentType.includes("application/json")
+          ? await response.json().catch(() => ({}))
+          : await response.text();
+
+        return {
+          status: response.status,
+          contentType,
+          payload,
+        };
+      } catch (error) {
+        if (error instanceof Error && error.name === "AbortError") {
+          throw new UpstreamTimeoutError(`Upstream request timed out after ${timeoutMs}ms`);
+        }
+        throw error;
+      } finally {
+        clearTimeout(timeoutHandle);
+      }
+    });
 
     reply.code(result.status);
     reply.header("content-type", result.contentType);
@@ -192,16 +230,11 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   const routingStore = new RoutingStateStore(config);
   await routingStore.load();
 
-  const refreshRoutingState = async (): Promise<void> => {
-    await routingStore.load();
-  };
-
   app.get("/internal/admin/ai-engine/target", async (request, reply) => {
     if (!isGatewayAdminAuthorized(request, config)) {
       return reply.code(401).send({ error: "Unauthorized" });
     }
 
-    await refreshRoutingState();
     return reply.send(getAiEngineTarget(config, routingStore));
   });
 
@@ -216,7 +249,6 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
     }
 
     try {
-      await refreshRoutingState();
       await applyAiEngineTarget(config, routingStore, parsed.data);
       return reply.send(getAiEngineTarget(config, routingStore));
     } catch (error) {
@@ -229,49 +261,41 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
       return reply.code(401).send({ error: "Unauthorized" });
     }
 
-    await refreshRoutingState();
     await resetAiEngineTarget(routingStore);
     return reply.send(getAiEngineTarget(config, routingStore));
   });
 
   app.post("/internal/ai-engine/generate/quiz", async (request, reply) => {
-    await refreshRoutingState();
     const url = buildUrl(getAiEngineApiBaseUrl(config, routingStore), "/generate/quiz", request.query as Record<string, unknown>);
     await forwardRequest(request, reply, url, "POST", upstreamGenerationTimeoutMs, getBreakerForUrl(getAiEngineApiBaseUrl(config, routingStore)));
   });
 
   app.post("/internal/ai-engine/generate/word-pass", async (request, reply) => {
-    await refreshRoutingState();
     const url = buildUrl(getAiEngineApiBaseUrl(config, routingStore), "/generate/word-pass", request.query as Record<string, unknown>);
     await forwardRequest(request, reply, url, "POST", upstreamGenerationTimeoutMs, getBreakerForUrl(getAiEngineApiBaseUrl(config, routingStore)));
   });
 
   app.post("/internal/ai-engine/ingest/quiz", async (request, reply) => {
-    await refreshRoutingState();
     const url = buildUrl(getAiEngineApiBaseUrl(config, routingStore), "/ingest/quiz", {});
     await forwardRequest(request, reply, url, "POST", upstreamGenerationTimeoutMs, getBreakerForUrl(getAiEngineApiBaseUrl(config, routingStore)));
   });
 
   app.post("/internal/ai-engine/ingest/word-pass", async (request, reply) => {
-    await refreshRoutingState();
     const url = buildUrl(getAiEngineApiBaseUrl(config, routingStore), "/ingest/word-pass", {});
     await forwardRequest(request, reply, url, "POST", upstreamGenerationTimeoutMs, getBreakerForUrl(getAiEngineApiBaseUrl(config, routingStore)));
   });
 
   app.get("/internal/ai-engine/catalogs", async (request, reply) => {
-    await refreshRoutingState();
     const url = buildUrl(getAiEngineApiBaseUrl(config, routingStore), "/catalogs", {});
     await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, getBreakerForUrl(getAiEngineApiBaseUrl(config, routingStore)));
   });
 
   app.get("/internal/ai-engine/health", async (request, reply) => {
-    await refreshRoutingState();
     const url = buildUrl(getAiEngineApiBaseUrl(config, routingStore), "/health", {});
     await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, getBreakerForUrl(getAiEngineApiBaseUrl(config, routingStore)));
   });
 
   app.get("/internal/ai-engine/stats", async (request, reply) => {
-    await refreshRoutingState();
     const url = buildUrl(getAiEngineStatsBaseUrl(config, routingStore), "/stats", request.query as Record<string, unknown>);
     await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, getBreakerForUrl(getAiEngineStatsBaseUrl(config, routingStore)));
   });
@@ -386,6 +410,42 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
 
     const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/services", {});
     await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, backofficeBreaker);
+  });
+
+  app.get("/v1/backoffice/ai-engine/target", async (request, reply) => {
+    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+      return;
+    }
+
+    const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/ai-engine/target", {});
+    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, backofficeBreaker);
+  });
+
+  app.put("/v1/backoffice/ai-engine/target", async (request, reply) => {
+    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+      return;
+    }
+
+    const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/ai-engine/target", {});
+    await forwardRequest(request, reply, url, "PUT", upstreamTimeoutMs, backofficeBreaker);
+  });
+
+  app.delete("/v1/backoffice/ai-engine/target", async (request, reply) => {
+    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+      return;
+    }
+
+    const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/ai-engine/target", {});
+    await forwardRequest(request, reply, url, "DELETE", upstreamTimeoutMs, backofficeBreaker);
+  });
+
+  app.post("/v1/backoffice/ai-engine/probe", async (request, reply) => {
+    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+      return;
+    }
+
+    const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/ai-engine/probe", {});
+    await forwardRequest(request, reply, url, "POST", upstreamTimeoutMs, backofficeBreaker);
   });
 
   app.get("/v1/backoffice/services/:service/metrics", async (request, reply) => {

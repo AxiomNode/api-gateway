@@ -255,6 +255,156 @@ describe("proxy routes", () => {
     await app.close();
   });
 
+  it("forwards ai-engine probe requests to bff-backoffice", async () => {
+    const app = Fastify();
+
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ reachable: true, api: { ok: true }, stats: { ok: true } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    await proxyRoutes(app, withStateFile({
+      SERVICE_NAME: "api-gateway",
+      SERVICE_PORT: 7005,
+      NODE_ENV: "test",
+      ALLOWED_ORIGINS: "http://localhost:3000",
+      BFF_MOBILE_URL: "http://bff-mobile:7010",
+      BFF_BACKOFFICE_URL: "http://bff-backoffice:7011",
+      EDGE_API_TOKEN: "edge-secret",
+    }));
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/backoffice/ai-engine/probe",
+      headers: {
+        authorization: "Bearer edge-secret",
+        "x-correlation-id": "corr-probe-1",
+        "x-dev-firebase-uid": "admin-dev-uid",
+      },
+      payload: {
+        host: "127.0.0.1",
+        protocol: "http",
+        apiPort: 7001,
+        statsPort: 7000,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://bff-backoffice:7011/v1/backoffice/ai-engine/probe",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          host: "127.0.0.1",
+          protocol: "http",
+          apiPort: 7001,
+          statsPort: 7000,
+        }),
+        headers: expect.objectContaining({
+          authorization: "Bearer edge-secret",
+          "x-correlation-id": "corr-probe-1",
+          "x-dev-firebase-uid": "admin-dev-uid",
+        }),
+      }),
+    );
+
+    await app.close();
+  });
+
+  it("forwards ai-engine target management requests to bff-backoffice", async () => {
+    const app = Fastify();
+
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ source: "default" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ source: "override", host: "127.0.0.1" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ source: "default" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    await proxyRoutes(app, withStateFile({
+      SERVICE_NAME: "api-gateway",
+      SERVICE_PORT: 7005,
+      NODE_ENV: "test",
+      ALLOWED_ORIGINS: "http://localhost:3000",
+      BFF_MOBILE_URL: "http://bff-mobile:7010",
+      BFF_BACKOFFICE_URL: "http://bff-backoffice:7011",
+      EDGE_API_TOKEN: "edge-secret",
+    }));
+
+    const getResponse = await app.inject({
+      method: "GET",
+      url: "/v1/backoffice/ai-engine/target",
+      headers: { authorization: "Bearer edge-secret" },
+    });
+
+    const putResponse = await app.inject({
+      method: "PUT",
+      url: "/v1/backoffice/ai-engine/target",
+      headers: { authorization: "Bearer edge-secret" },
+      payload: {
+        host: "127.0.0.1",
+        protocol: "http",
+        apiPort: 7001,
+        statsPort: 7000,
+      },
+    });
+
+    const deleteResponse = await app.inject({
+      method: "DELETE",
+      url: "/v1/backoffice/ai-engine/target",
+      headers: { authorization: "Bearer edge-secret" },
+    });
+
+    expect(getResponse.statusCode).toBe(200);
+    expect(putResponse.statusCode).toBe(200);
+    expect(deleteResponse.statusCode).toBe(200);
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "http://bff-backoffice:7011/v1/backoffice/ai-engine/target",
+      expect.objectContaining({ method: "GET" }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "http://bff-backoffice:7011/v1/backoffice/ai-engine/target",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({
+          host: "127.0.0.1",
+          protocol: "http",
+          apiPort: 7001,
+          statsPort: 7000,
+        }),
+      }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      "http://bff-backoffice:7011/v1/backoffice/ai-engine/target",
+      expect.objectContaining({ method: "DELETE" }),
+    );
+
+    await app.close();
+  });
+
   it("forwards backoffice game catalogs", async () => {
     const app = Fastify();
 
