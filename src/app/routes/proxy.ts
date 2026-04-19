@@ -32,69 +32,6 @@ function buildAiEngineBaseUrl(protocol: "http" | "https", host: string, port: nu
   return `${protocol}://${host}:${port}`;
 }
 
-function parseIpv4Address(host: string): number | null {
-  const octets = host.split(".");
-  if (octets.length !== 4) {
-    return null;
-  }
-
-  const numbers = octets.map((part) => Number(part));
-  if (numbers.some((value) => !Number.isInteger(value) || value < 0 || value > 255)) {
-    return null;
-  }
-
-  return ((numbers[0] << 24) >>> 0) + (numbers[1] << 16) + (numbers[2] << 8) + numbers[3];
-}
-
-function isIpv4InCidr(host: string, cidr: string): boolean {
-  const [network, prefixRaw] = cidr.split("/");
-  const ip = parseIpv4Address(host);
-  const networkIp = parseIpv4Address(network ?? "");
-  const prefix = Number(prefixRaw);
-
-  if (ip === null || networkIp === null || !Number.isInteger(prefix) || prefix < 0 || prefix > 32) {
-    return false;
-  }
-
-  if (prefix === 0) {
-    return true;
-  }
-
-  const mask = (0xffffffff << (32 - prefix)) >>> 0;
-  return (ip & mask) === (networkIp & mask);
-}
-
-function isAllowedRoutingTargetHost(config: AppConfig, host: string): boolean {
-  const policy = config.ALLOWED_ROUTING_TARGET_HOSTS?.trim();
-  if (!policy) {
-    return true;
-  }
-
-  const normalizedHost = host.trim().toLowerCase();
-  const rules = policy
-    .split(",")
-    .map((entry) => entry.trim().toLowerCase())
-    .filter((entry) => entry.length > 0);
-
-  return rules.some((rule) => {
-    if (rule.includes("/")) {
-      return isIpv4InCidr(normalizedHost, rule);
-    }
-
-    if (rule.startsWith("*.")) {
-      return normalizedHost === rule.slice(2) || normalizedHost.endsWith(rule.slice(1));
-    }
-
-    return normalizedHost === rule;
-  });
-}
-
-function assertAllowedRoutingTargetHost(config: AppConfig, host: string): void {
-  if (!isAllowedRoutingTargetHost(config, host)) {
-    throw new Error(`host '${host}' is not allowed by ALLOWED_ROUTING_TARGET_HOSTS`);
-  }
-}
-
 function parseBaseUrl(url: string): {
   host: string | null;
   protocol: "http" | "https" | null;
