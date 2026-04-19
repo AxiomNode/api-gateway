@@ -405,6 +405,52 @@ describe("proxy routes", () => {
     await app.close();
   });
 
+  it("forwards backoffice operational summary requests", async () => {
+    const app = Fastify();
+
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ totals: { total: 8, onlineCount: 7, accessIssues: 0, connectionErrors: 1 }, rows: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    await proxyRoutes(app, withStateFile({
+      SERVICE_NAME: "api-gateway",
+      SERVICE_PORT: 7005,
+      NODE_ENV: "test",
+      ALLOWED_ORIGINS: "http://localhost:3000",
+      BFF_MOBILE_URL: "http://bff-mobile:7010",
+      BFF_BACKOFFICE_URL: "http://bff-backoffice:7011",
+      EDGE_API_TOKEN: "edge-secret",
+    }));
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/backoffice/services/operational-summary",
+      headers: {
+        authorization: "Bearer edge-secret",
+        "x-correlation-id": "corr-summary-1",
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://bff-backoffice:7011/v1/backoffice/services/operational-summary",
+      expect.objectContaining({
+        method: "GET",
+        headers: expect.objectContaining({
+          authorization: "Bearer edge-secret",
+          "x-correlation-id": "corr-summary-1",
+        }),
+      }),
+    );
+
+    await app.close();
+  });
+
   it("forwards backoffice game catalogs", async () => {
     const app = Fastify();
 

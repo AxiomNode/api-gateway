@@ -412,6 +412,15 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
     await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, backofficeBreaker);
   });
 
+  app.get("/v1/backoffice/services/operational-summary", async (request, reply) => {
+    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+      return;
+    }
+
+    const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/services/operational-summary", {});
+    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, backofficeBreaker);
+  });
+
   app.get("/v1/backoffice/ai-engine/target", async (request, reply) => {
     if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
       return;
