@@ -73,6 +73,20 @@ async function buildServer() {
       responseBytes,
     });
 
+    metrics.recordLog(
+      reply.statusCode >= 500 ? "error" : reply.statusCode >= 400 ? "warn" : "info",
+      "request_completed",
+      {
+        correlation_id: correlationId,
+        method: request.method,
+        route,
+        status_code: reply.statusCode,
+        duration_ms: durationMs,
+        request_bytes: requestAny._requestBytes ?? 0,
+        response_bytes: responseBytes,
+      },
+    );
+
     app.log.info({
       correlation_id: correlationId,
       service: config.SERVICE_NAME,
