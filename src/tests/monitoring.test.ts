@@ -1,0 +1,101 @@
+import { describe, expect, it } from "vitest";
+
+import Fastify from "fastify";
+
+import { monitoringRoutes } from "../app/routes/monitoring.js";
+import { ServiceMetrics } from "../app/services/serviceMetrics.js";
+
+function createMetrics(bufferSize?: number) {
+  return new ServiceMetrics({
+    SERVICE_NAME: "api-gateway",
+    METRICS_LOG_BUFFER_SIZE: bufferSize,
+  } as never);
+}
+
+describe("monitoring routes", () => {
+  it("returns stats, bounded logs and prometheus metrics", async () => {
+    const app = Fastify();
+    const metrics = createMetrics(2);
+
+    metrics.incrementInflight();
+    metrics.recordIncomingRequest({
+      method: "GET",
+      route: "/v1/mobile/games/quiz/random",
+      statusCode: 200,
+      durationMs: 125,
+      requestBytes: 64,
+      responseBytes: 256,
+    });
+    metrics.recordIncomingRequest({
+      method: "POST",
+      route: "/v1/backoffice/ai-engine/target",
+      statusCode: 502,
+      durationMs: 6000,
+      requestBytes: 32,
+      responseBytes: 16,
+    });
+    metrics.decrementInflight();
+    metrics.decrementInflight();
+
+    metrics.recordLog("info", "first");
+    metrics.recordLog("warn", "second", { attempt: 2 });
+    metrics.recordLog("error", "third", { cause: "timeout" });
+
+    await monitoringRoutes(app, metrics);
+
+    const statsResponse = await app.inject({ method: "GET", url: "/monitor/stats" });
+    expect(statsResponse.statusCode).toBe(200);
+    expect(statsResponse.json()).toMatchObject({
+      service: "api-gateway",
+      traffic: {
+        requestsReceivedTotal: 2,
+        errorsTotal: 1,
+        inflightRequests: 0,
+        latencyCount: 2,
+        requestBytesInTotal: 96,
+        responseBytesOutTotal: 272,
+      },
+    });
+
+    const logsResponse = await app.inject({ method: "GET", url: "/monitor/logs?limit=2" });
+    expect(logsResponse.statusCode).toBe(200);
+    expect(logsResponse.json()).toMatchObject({
+      service: "api-gateway",
+      total: 2,
+      logs: [
+        expect.objectContaining({ level: "warn", message: "second" }),
+        expect.objectContaining({ level: "error", message: "third" }),
+      ],
+    });
+
+    const metricsResponse = await app.inject({ method: "GET", url: "/metrics" });
+    expect(metricsResponse.statusCode).toBe(200);
+    expect(metricsResponse.body).toContain("edge_requests_received_total 2");
+    expect(metricsResponse.body).toContain('errors_total{service="api-gateway"} 1');
+    expect(metricsResponse.body).toContain('latency_ms_bucket{service="api-gateway",le="+Inf"} 2');
+
+    await app.close();
+  });
+
+  it("rejects invalid log query parameters and accepts omitted query via defaults", async () => {
+    const app = Fastify();
+    const metrics = createMetrics();
+    metrics.recordLog("info", "kept");
+
+    await monitoringRoutes(app, metrics);
+
+    const invalidResponse = await app.inject({ method: "GET", url: "/monitor/logs?limit=0" });
+    expect(invalidResponse.statusCode).toBe(400);
+    expect(invalidResponse.json()).toMatchObject({ message: "Invalid query parameters" });
+
+    const defaultResponse = await app.inject({ method: "GET", url: "/monitor/logs" });
+    expect(defaultResponse.statusCode).toBe(200);
+    expect(defaultResponse.json()).toMatchObject({
+      service: "api-gateway",
+      total: 1,
+      logs: [expect.objectContaining({ message: "kept" })],
+    });
+
+    await app.close();
+  });
+});

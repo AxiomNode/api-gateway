@@ -1,5 +1,7 @@
 # api-gateway
 
+[![codecov](https://codecov.io/gh/AxiomNode/api-gateway/branch/main/graph/badge.svg)](https://codecov.io/gh/AxiomNode/api-gateway)
+
 Single edge gateway for AxiomNode public traffic.
 
 ## Architectural role
@@ -25,6 +27,16 @@ flowchart LR
 - Apply edge concerns: auth, CORS, rate limits, and request tracing.
 - Route requests to channel-specific BFF services.
 - Provide the stable internal ai-engine upstream used by cluster services when ai-engine runs externally on an optional workstation.
+
+## Concrete upstream model
+
+`api-gateway` has three distinct forwarding roles:
+
+1. client edge routing toward `bff-mobile`
+2. client edge routing toward `bff-backoffice`
+3. internal ai-engine proxying toward the active AI API and stats target
+
+That third role matters operationally because the gateway can expose stable internal AI routes while the actual AI upstream host changes over time.
 
 ## Repository structure
 
@@ -73,6 +85,24 @@ The ai-engine target managed through `/internal/admin/ai-engine/target` is inten
 - This state survives pod recreation and process restart.
 - The gateway therefore owns effective ai-engine connectivity, not only the static environment default.
 
+## Effective target resolution
+
+For ai-engine traffic, the effective target is determined in this order:
+
+1. persisted runtime override held by the gateway
+2. environment-derived default target
+
+This repository therefore owns a live routing decision that is not fully described by static manifests alone.
+
+## Dependency surface
+
+Primary downstream dependencies:
+
+- `bff-mobile`
+- `bff-backoffice`
+- active `ai-engine-api` target
+- active `ai-engine-stats` target
+
 ## Operational constraints
 
 - `api-gateway` is part of the automatic GHCR-to-k3s staging rollout chain.
@@ -103,6 +133,22 @@ The ai-engine target managed through `/internal/admin/ai-engine/target` is inten
 - If repository CI fails, no image is published from that push.
 - If `platform-infra` build fails, GHCR publication stops there.
 - If staging deploy fails, rollout diagnostics live in `platform-infra`, not in this repository.
+
+## Failure boundaries
+
+- edge policy failure before forwarding
+- BFF reachability failure
+- ai-engine target points to an unreachable or wrong upstream
+- upstream timeout or slow-response degradation
+
+## Repository-local documentation scope
+
+This repository should stay concrete about:
+
+- exposed edge and internal AI routes
+- gateway-owned routing state
+- target resolution behavior
+- repo-local CI and deployment gates
 
 ## Key environment variables
 

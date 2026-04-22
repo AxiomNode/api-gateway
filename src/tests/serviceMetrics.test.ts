@@ -50,4 +50,27 @@ describe("ServiceMetrics", () => {
       ]),
     );
   });
+
+  it("handles default branches for empty snapshots, underflow protection and missing buckets", () => {
+    const metrics = new ServiceMetrics({
+      SERVICE_NAME: "api-gateway",
+    } as never);
+
+    metrics.decrementInflight();
+    expect(metrics.snapshot().traffic).toMatchObject({
+      inflightRequests: 0,
+      latencyAvgMs: 0,
+    });
+
+    const internalMetrics = metrics as unknown as {
+      latencyBucketCounters: Map<number, number>;
+    };
+    internalMetrics.latencyBucketCounters.delete(50);
+
+    const prometheus = metrics.toPrometheus();
+    expect(prometheus).toContain('latency_ms_bucket{service="api-gateway",le="50"} 0');
+
+    metrics.recordLog("info", "default-buffer");
+    expect(metrics.recentLogs(0)).toHaveLength(1);
+  });
 });

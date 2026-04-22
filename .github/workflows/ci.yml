@@ -59,8 +59,15 @@ jobs:
         working-directory: api-gateway/src
       - run: npm run build
         working-directory: api-gateway/src
-      - run: npm test
+      - run: npm run test:coverage
         working-directory: api-gateway/src
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: api-gateway/src/coverage/lcov.info
+          flags: api-gateway
+          fail_ci_if_error: false
       - run: npm run lint
         working-directory: api-gateway/src
       - run: npm audit --omit=dev --audit-level=high
