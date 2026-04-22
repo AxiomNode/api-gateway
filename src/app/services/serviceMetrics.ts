@@ -26,6 +26,8 @@ export class ServiceMetrics {
   private latencySumMs = 0;
   private requestBytesInTotal = 0;
   private responseBytesOutTotal = 0;
+  private readonly rateLimitBlocksByCategory = new Map<string, number>();
+  private rateLimitBlocksTotal = 0;
 
   constructor(private readonly config: AppConfig) {
     for (const bucket of this.latencyBucketsMs) {
@@ -87,6 +89,11 @@ export class ServiceMetrics {
     return this.logs.slice(-Math.max(1, limit));
   }
 
+  recordRateLimitBlock(category: string): void {
+    this.rateLimitBlocksTotal += 1;
+    this.rateLimitBlocksByCategory.set(category, (this.rateLimitBlocksByCategory.get(category) ?? 0) + 1);
+  }
+
   snapshot() {
     return {
       service: this.config.SERVICE_NAME,
@@ -109,6 +116,10 @@ export class ServiceMetrics {
           total,
         };
       }),
+      rateLimit: {
+        blocksTotal: this.rateLimitBlocksTotal,
+        blocksByCategory: Object.fromEntries(this.rateLimitBlocksByCategory.entries()),
+      },
     };
   }
 
@@ -154,6 +165,15 @@ export class ServiceMetrics {
     lines.push(`latency_ms_bucket{service="${this.config.SERVICE_NAME}",le="+Inf"} ${this.latencyCount}`);
     lines.push(`latency_ms_sum{service="${this.config.SERVICE_NAME}"} ${this.latencySumMs}`);
     lines.push(`latency_ms_count{service="${this.config.SERVICE_NAME}"} ${this.latencyCount}`);
+
+    lines.push("# HELP gateway_rate_limit_blocks_total Total requests rejected by rate limiter");
+    lines.push("# TYPE gateway_rate_limit_blocks_total counter");
+    lines.push(`gateway_rate_limit_blocks_total{service="${this.config.SERVICE_NAME}"} ${this.rateLimitBlocksTotal}`);
+    for (const [category, total] of this.rateLimitBlocksByCategory.entries()) {
+      lines.push(
+        `gateway_rate_limit_blocks_by_category_total{service="${this.config.SERVICE_NAME}",category="${category}"} ${total}`
+      );
+    }
 
     return lines.join("\n");
   }

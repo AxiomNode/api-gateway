@@ -10,15 +10,17 @@ import { healthRoutes } from "./routes/health.js";
 import { monitoringRoutes } from "./routes/monitoring.js";
 import { proxyRoutes } from "./routes/proxy.js";
 import { ServiceMetrics } from "./services/serviceMetrics.js";
+import { RateLimiter, classifyRoute } from "./services/rateLimiter.js";
 
 configureHttpAgent();
 
 /** @module server — Fastify-based API Gateway with CORS, metrics, and proxy routing. */
 
-async function buildServer() {
+export async function buildServer() {
   const config = loadConfig();
   const app = Fastify({ logger: true });
   const metrics = new ServiceMetrics(config);
+  const rateLimiter = new RateLimiter(config);
 
   const allowedOrigins = config.ALLOWED_ORIGINS.split(",").map((v) => v.trim());
   await app.register(cors, {
@@ -42,6 +44,42 @@ async function buildServer() {
     request.headers["x-correlation-id"] = requestAny._correlationId;
 
     metrics.incrementInflight();
+  });
+
+  app.addHook("preHandler", async (request, reply) => {
+    if (!rateLimiter.isEnabled()) {
+      return;
+    }
+
+    const route = (request.routeOptions?.url ?? request.url) as string;
+    const category = classifyRoute(request.method, route);
+    if (category === "skip") {
+      return;
+    }
+
+    const ip = (request.ip ?? "unknown").toString();
+    const decision = rateLimiter.consume(ip, category);
+    reply.header("x-ratelimit-limit", String(decision.limit));
+    reply.header("x-ratelimit-remaining", String(decision.remaining));
+
+    if (!decision.allowed) {
+      const correlationId = String(request.headers["x-correlation-id"] ?? "");
+      metrics.recordRateLimitBlock(decision.category);
+      metrics.recordLog("warn", "rate_limit_blocked", {
+        correlation_id: correlationId,
+        route,
+        method: request.method,
+        category: decision.category,
+        ip,
+        retry_after_seconds: decision.retryAfterSeconds,
+      });
+      reply.header("retry-after", String(decision.retryAfterSeconds));
+      reply.code(429).send({
+        message: "Too Many Requests",
+        category: decision.category,
+        retryAfterSeconds: decision.retryAfterSeconds,
+      });
+    }
   });
 
   app.addHook("onResponse", async (request, reply) => {
@@ -125,7 +163,18 @@ async function main() {
   app.log.info({ service: config.SERVICE_NAME }, "Gateway started");
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+const isDirectRun = (() => {
+  try {
+    const entryUrl = new URL(`file://${process.argv[1] ?? ""}`).href;
+    return import.meta.url === entryUrl;
+  } catch {
+    return false;
+  }
+})();
+
+if (isDirectRun) {
+  main().catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+}
