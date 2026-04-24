@@ -588,6 +588,83 @@ describe("proxy routes", () => {
     await app.close();
   });
 
+  it("forwards ai diagnostics routes to bff-backoffice", async () => {
+    const app = Fastify();
+
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ total_chunks: 12, coverage_level: "good", sources: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ status: "running" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ status: "completed", suites: {}, summary: { total: 1, passed: 1, failed: 0, skipped: 0, errors: 0 } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    await proxyRoutes(app, withStateFile({
+      SERVICE_NAME: "api-gateway",
+      SERVICE_PORT: 7005,
+      NODE_ENV: "test",
+      ALLOWED_ORIGINS: "http://localhost:3000",
+      BFF_MOBILE_URL: "http://bff-mobile:7010",
+      BFF_BACKOFFICE_URL: "http://bff-backoffice:7011",
+      EDGE_API_TOKEN: "edge-secret",
+    }));
+
+    const ragResponse = await app.inject({
+      method: "GET",
+      url: "/v1/backoffice/ai-diagnostics/rag/stats",
+      headers: { authorization: "Bearer edge-secret" },
+    });
+
+    const runResponse = await app.inject({
+      method: "POST",
+      url: "/v1/backoffice/ai-diagnostics/tests/run",
+      headers: { authorization: "Bearer edge-secret" },
+      payload: {},
+    });
+
+    const statusResponse = await app.inject({
+      method: "GET",
+      url: "/v1/backoffice/ai-diagnostics/tests/status",
+      headers: { authorization: "Bearer edge-secret" },
+    });
+
+    expect(ragResponse.statusCode).toBe(200);
+    expect(runResponse.statusCode).toBe(200);
+    expect(statusResponse.statusCode).toBe(200);
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "http://bff-backoffice:7011/v1/backoffice/ai-diagnostics/rag/stats",
+      expect.objectContaining({ method: "GET" }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "http://bff-backoffice:7011/v1/backoffice/ai-diagnostics/tests/run",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({}) }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      "http://bff-backoffice:7011/v1/backoffice/ai-diagnostics/tests/status",
+      expect.objectContaining({ method: "GET" }),
+    );
+
+    await app.close();
+  });
+
   it("forwards backoffice operational summary requests", async () => {
     const app = Fastify();
 
@@ -1168,6 +1245,9 @@ describe("proxy routes", () => {
       app.inject({ method: "PUT", url: "/v1/backoffice/ai-engine/presets/preset-1" }),
       app.inject({ method: "DELETE", url: "/v1/backoffice/ai-engine/presets/preset-1" }),
       app.inject({ method: "POST", url: "/v1/backoffice/ai-engine/probe" }),
+      app.inject({ method: "GET", url: "/v1/backoffice/ai-diagnostics/rag/stats" }),
+      app.inject({ method: "POST", url: "/v1/backoffice/ai-diagnostics/tests/run", payload: {} }),
+      app.inject({ method: "GET", url: "/v1/backoffice/ai-diagnostics/tests/status" }),
       app.inject({ method: "GET", url: "/v1/backoffice/services/microservice-quiz/metrics" }),
       app.inject({ method: "GET", url: "/v1/backoffice/services/microservice-quiz/logs" }),
       app.inject({ method: "GET", url: "/v1/backoffice/services/microservice-quiz/data" }),

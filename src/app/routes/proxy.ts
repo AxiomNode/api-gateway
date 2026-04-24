@@ -503,6 +503,33 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
     await forwardRequest(request, reply, url, "POST", upstreamTimeoutMs, backofficeBreaker);
   });
 
+  app.get("/v1/backoffice/ai-diagnostics/rag/stats", async (request, reply) => {
+    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+      return;
+    }
+
+    const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/ai-diagnostics/rag/stats", {});
+    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, backofficeBreaker);
+  });
+
+  app.post("/v1/backoffice/ai-diagnostics/tests/run", async (request, reply) => {
+    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+      return;
+    }
+
+    const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/ai-diagnostics/tests/run", {});
+    await forwardRequest(request, reply, url, "POST", upstreamTimeoutMs, backofficeBreaker);
+  });
+
+  app.get("/v1/backoffice/ai-diagnostics/tests/status", async (request, reply) => {
+    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+      return;
+    }
+
+    const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/ai-diagnostics/tests/status", {});
+    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, backofficeBreaker);
+  });
+
   app.get("/v1/backoffice/services/:service/metrics", async (request, reply) => {
     if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
       return;
