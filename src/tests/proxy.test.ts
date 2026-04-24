@@ -1090,6 +1090,78 @@ describe("proxy routes", () => {
     await app.close();
   });
 
+  it("forwards backoffice service targets and generation worker/process routes", async () => {
+    const app = Fastify();
+
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ total: 1, targets: [] }), { status: 200, headers: { "content-type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ service: "microservice-users", source: "override" }), { status: 200, headers: { "content-type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ service: "microservice-users", source: "env" }), { status: 200, headers: { "content-type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "entry-1" }), { status: 200, headers: { "content-type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ taskId: "550e8400-e29b-41d4-a716-446655440000" }), { status: 202, headers: { "content-type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ status: "queued" }), { status: 202, headers: { "content-type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "content-type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ task: { taskId: "550e8400-e29b-41d4-a716-446655440000" } }), { status: 200, headers: { "content-type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ worker: { active: false } }), { status: 200, headers: { "content-type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ worker: { active: true } }), { status: 200, headers: { "content-type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ worker: { active: false } }), { status: 200, headers: { "content-type": "application/json" } }));
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    await proxyRoutes(app, withStateFile({
+      SERVICE_NAME: "api-gateway",
+      SERVICE_PORT: 7005,
+      NODE_ENV: "test",
+      ALLOWED_ORIGINS: "http://localhost:3000",
+      BFF_MOBILE_URL: "http://bff-mobile:7010",
+      BFF_BACKOFFICE_URL: "http://bff-backoffice:7011",
+      EDGE_API_TOKEN: "edge-secret",
+    }));
+
+    const headers = {
+      authorization: "Bearer edge-secret",
+      "x-correlation-id": "corr-backoffice-advanced",
+    };
+
+    const serviceTargets = await app.inject({ method: "GET", url: "/v1/backoffice/service-targets", headers });
+    const applyTarget = await app.inject({ method: "PUT", url: "/v1/backoffice/service-targets/microservice-users", headers, payload: { baseUrl: "http://users:7012", label: "override users" } });
+    const resetTarget = await app.inject({ method: "DELETE", url: "/v1/backoffice/service-targets/microservice-users", headers });
+    const patchData = await app.inject({ method: "PATCH", url: "/v1/backoffice/services/microservice-quiz/data/entry-1", headers, payload: { dataset: "history", content: { foo: "bar" } } });
+    const startProcess = await app.inject({ method: "POST", url: "/v1/backoffice/services/microservice-quiz/generation/process", headers, payload: { query: "fotosintesis", game_type: "quiz" } });
+    const waitProcess = await app.inject({ method: "POST", url: "/v1/backoffice/services/microservice-quiz/generation/wait", headers, payload: { query: "fotosintesis", game_type: "quiz" } });
+    const listProcesses = await app.inject({ method: "GET", url: "/v1/backoffice/services/microservice-quiz/generation/processes?limit=25&status=running", headers });
+    const getProcess = await app.inject({ method: "GET", url: "/v1/backoffice/services/microservice-quiz/generation/process/550e8400-e29b-41d4-a716-446655440000?includeItems=false", headers });
+    const getWorker = await app.inject({ method: "GET", url: "/v1/backoffice/services/microservice-quiz/generation/worker", headers });
+    const startWorker = await app.inject({ method: "POST", url: "/v1/backoffice/services/microservice-quiz/generation/worker/start", headers, payload: { countPerIteration: 10 } });
+    const stopWorker = await app.inject({ method: "POST", url: "/v1/backoffice/services/microservice-quiz/generation/worker/stop", headers });
+
+    expect(serviceTargets.statusCode).toBe(200);
+    expect(applyTarget.statusCode).toBe(200);
+    expect(resetTarget.statusCode).toBe(200);
+    expect(patchData.statusCode).toBe(200);
+    expect(startProcess.statusCode).toBe(202);
+    expect(waitProcess.statusCode).toBe(202);
+    expect(listProcesses.statusCode).toBe(200);
+    expect(getProcess.statusCode).toBe(200);
+    expect(getWorker.statusCode).toBe(200);
+    expect(startWorker.statusCode).toBe(200);
+    expect(stopWorker.statusCode).toBe(200);
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "http://bff-backoffice:7011/v1/backoffice/service-targets", expect.objectContaining({ method: "GET" }));
+    expect(fetchMock).toHaveBeenNthCalledWith(2, "http://bff-backoffice:7011/v1/backoffice/service-targets/microservice-users", expect.objectContaining({ method: "PUT" }));
+    expect(fetchMock).toHaveBeenNthCalledWith(3, "http://bff-backoffice:7011/v1/backoffice/service-targets/microservice-users", expect.objectContaining({ method: "DELETE" }));
+    expect(fetchMock).toHaveBeenNthCalledWith(4, "http://bff-backoffice:7011/v1/backoffice/services/microservice-quiz/data/entry-1", expect.objectContaining({ method: "PATCH" }));
+    expect(fetchMock).toHaveBeenNthCalledWith(5, "http://bff-backoffice:7011/v1/backoffice/services/microservice-quiz/generation/process", expect.objectContaining({ method: "POST" }));
+    expect(fetchMock).toHaveBeenNthCalledWith(6, "http://bff-backoffice:7011/v1/backoffice/services/microservice-quiz/generation/wait", expect.objectContaining({ method: "POST" }));
+    expect(fetchMock).toHaveBeenNthCalledWith(7, "http://bff-backoffice:7011/v1/backoffice/services/microservice-quiz/generation/processes?limit=25&status=running", expect.objectContaining({ method: "GET" }));
+    expect(fetchMock).toHaveBeenNthCalledWith(8, "http://bff-backoffice:7011/v1/backoffice/services/microservice-quiz/generation/process/550e8400-e29b-41d4-a716-446655440000?includeItems=false", expect.objectContaining({ method: "GET" }));
+    expect(fetchMock).toHaveBeenNthCalledWith(9, "http://bff-backoffice:7011/v1/backoffice/services/microservice-quiz/generation/worker", expect.objectContaining({ method: "GET" }));
+    expect(fetchMock).toHaveBeenNthCalledWith(10, "http://bff-backoffice:7011/v1/backoffice/services/microservice-quiz/generation/worker/start", expect.objectContaining({ method: "POST" }));
+    expect(fetchMock).toHaveBeenNthCalledWith(11, "http://bff-backoffice:7011/v1/backoffice/services/microservice-quiz/generation/worker/stop", expect.objectContaining({ method: "POST" }));
+
+    await app.close();
+  });
+
   it("persists ai-engine target overrides in the gateway", async () => {
     const firstApp = Fastify();
     const secondApp = Fastify();
@@ -1253,7 +1325,18 @@ describe("proxy routes", () => {
       app.inject({ method: "GET", url: "/v1/backoffice/services/microservice-quiz/data" }),
       app.inject({ method: "GET", url: "/v1/backoffice/services/microservice-quiz/catalogs" }),
       app.inject({ method: "POST", url: "/v1/backoffice/services/microservice-quiz/data" }),
+      app.inject({ method: "PATCH", url: "/v1/backoffice/services/microservice-quiz/data/entry-1" }),
       app.inject({ method: "DELETE", url: "/v1/backoffice/services/microservice-quiz/data/entry-1" }),
+      app.inject({ method: "GET", url: "/v1/backoffice/service-targets" }),
+      app.inject({ method: "PUT", url: "/v1/backoffice/service-targets/microservice-users" }),
+      app.inject({ method: "DELETE", url: "/v1/backoffice/service-targets/microservice-users" }),
+      app.inject({ method: "POST", url: "/v1/backoffice/services/microservice-quiz/generation/process" }),
+      app.inject({ method: "POST", url: "/v1/backoffice/services/microservice-quiz/generation/wait" }),
+      app.inject({ method: "GET", url: "/v1/backoffice/services/microservice-quiz/generation/processes" }),
+      app.inject({ method: "GET", url: "/v1/backoffice/services/microservice-quiz/generation/process/550e8400-e29b-41d4-a716-446655440000" }),
+      app.inject({ method: "GET", url: "/v1/backoffice/services/microservice-quiz/generation/worker" }),
+      app.inject({ method: "POST", url: "/v1/backoffice/services/microservice-quiz/generation/worker/start" }),
+      app.inject({ method: "POST", url: "/v1/backoffice/services/microservice-quiz/generation/worker/stop" }),
     ]);
 
     for (const response of responses) {
