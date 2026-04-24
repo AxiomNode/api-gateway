@@ -318,6 +318,11 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
     await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, backofficeBreaker);
   });
 
+  app.get("/v1/mobile/games/categories", async (request, reply) => {
+    const url = buildUrl(config.BFF_MOBILE_URL, "/v1/mobile/games/categories", {});
+    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, mobileBreaker);
+  });
+
   app.get("/v1/mobile/games/quiz/random", async (request, reply) => {
     const parsedQuery = RandomGameQuerySchema.safeParse(request.query ?? {});
     if (!parsedQuery.success) {

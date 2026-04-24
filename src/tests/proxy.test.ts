@@ -71,6 +71,52 @@ describe("proxy routes", () => {
     await app.close();
   });
 
+  it("forwards mobile catalogs to bff-mobile", async () => {
+    const app = Fastify();
+
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          categories: [{ id: "ciencia", name: "Ciencia" }],
+          languages: [{ code: "es", name: "Español" }],
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      ),
+    );
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    await proxyRoutes(app, withStateFile({
+      SERVICE_NAME: "api-gateway",
+      SERVICE_PORT: 7005,
+      NODE_ENV: "test",
+      ALLOWED_ORIGINS: "http://localhost:3000",
+      BFF_MOBILE_URL: "http://bff-mobile:7010",
+      BFF_BACKOFFICE_URL: "http://bff-backoffice:7011",
+      EDGE_API_TOKEN: "",
+    }));
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/mobile/games/categories",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      categories: [{ id: "ciencia", name: "Ciencia" }],
+      languages: [{ code: "es", name: "Español" }],
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://bff-mobile:7010/v1/mobile/games/categories",
+      expect.objectContaining({ method: "GET" }),
+    );
+
+    await app.close();
+  });
+
   it("keeps backoffice routes protected when edge token is configured and missing", async () => {
     const app = Fastify();
 
