@@ -323,6 +323,21 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
     await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, mobileBreaker);
   });
 
+  app.get("/v1/mobile/player/profile", async (request, reply) => {
+    const url = buildUrl(config.BFF_MOBILE_URL, "/v1/mobile/player/profile", {});
+    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, mobileBreaker);
+  });
+
+  app.put("/v1/mobile/player/profile", async (request, reply) => {
+    const url = buildUrl(config.BFF_MOBILE_URL, "/v1/mobile/player/profile", {});
+    await forwardRequest(request, reply, url, "PUT", upstreamTimeoutMs, mobileBreaker);
+  });
+
+  app.post("/v1/mobile/games/events", async (request, reply) => {
+    const url = buildUrl(config.BFF_MOBILE_URL, "/v1/mobile/games/events", {});
+    await forwardRequest(request, reply, url, "POST", upstreamTimeoutMs, mobileBreaker);
+  });
+
   app.get("/v1/mobile/games/quiz/random", async (request, reply) => {
     const parsedQuery = RandomGameQuerySchema.safeParse(request.query ?? {});
     if (!parsedQuery.success) {
