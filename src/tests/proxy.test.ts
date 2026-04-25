@@ -412,6 +412,44 @@ describe("proxy routes", () => {
     await app.close();
   });
 
+  it("forwards count on quiz random to bff-mobile", async () => {
+    const app = Fastify();
+
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ source: "bff-mobile", requested: 2, returned: 2, items: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    await proxyRoutes(app, withStateFile({
+      SERVICE_NAME: "api-gateway",
+      SERVICE_PORT: 7005,
+      NODE_ENV: "test",
+      ALLOWED_ORIGINS: "http://localhost:3000",
+      BFF_MOBILE_URL: "http://bff-mobile:7010",
+      BFF_BACKOFFICE_URL: "http://bff-backoffice:7011",
+      EDGE_API_TOKEN: "",
+    }));
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/mobile/games/quiz/random?count=2&language=es",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ source: "bff-mobile" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const calledUrl = String(fetchMock.mock.calls[0]?.[0]);
+    expect(calledUrl).toContain("http://bff-mobile:7010/v1/mobile/games/quiz/random?");
+    expect(calledUrl).toContain("language=es");
+    expect(calledUrl).toContain("count=2");
+
+    await app.close();
+  });
+
   it("rejects invalid random-game query params before proxying", async () => {
     const app = Fastify();
 

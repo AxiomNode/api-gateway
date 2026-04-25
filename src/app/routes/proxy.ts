@@ -7,7 +7,7 @@ import {
   extractForwardHeaders,
   forwardHttp,
 } from "@axiomnode/shared-sdk-client/proxy";
-import { LeaderboardQuerySchema, RandomGameQuerySchema } from "@axiomnode/shared-sdk-client/contracts";
+import { LeaderboardQuerySchema } from "@axiomnode/shared-sdk-client/contracts";
 import { z } from "zod";
 
 import type { AppConfig } from "../config.js";
@@ -22,6 +22,12 @@ const AiEngineTargetSchema = z.object({
   statsPort: z.coerce.number().int().min(1).max(65535).default(7000),
   label: z.string().trim().max(80).optional(),
 });
+
+const MobileRandomQuerySchema = z.object({
+  language: z.string().optional(),
+  categoryId: z.string().min(1).optional(),
+  count: z.coerce.number().int().positive().max(50).optional(),
+}).strict();
 
 function normalizeAiEngineHost(raw: string): string {
   const trimmed = raw.trim().replace(/^https?:\/\//i, "").replace(/\/+$/, "");
@@ -339,7 +345,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.get("/v1/mobile/games/quiz/random", async (request, reply) => {
-    const parsedQuery = RandomGameQuerySchema.safeParse(request.query ?? {});
+    const parsedQuery = MobileRandomQuerySchema.safeParse(request.query ?? {});
     if (!parsedQuery.success) {
       return sendValidationError(reply, parsedQuery.error);
     }
@@ -349,7 +355,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.get("/v1/mobile/games/wordpass/random", async (request, reply) => {
-    const parsedQuery = RandomGameQuerySchema.safeParse(request.query ?? {});
+    const parsedQuery = MobileRandomQuerySchema.safeParse(request.query ?? {});
     if (!parsedQuery.success) {
       return sendValidationError(reply, parsedQuery.error);
     }
