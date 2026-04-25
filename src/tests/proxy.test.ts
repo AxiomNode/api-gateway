@@ -64,7 +64,7 @@ describe("proxy routes", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ source: "bff-mobile" });
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://bff-mobile:7010/v1/mobile/games/quiz/random?language=es",
+      "http://bff-mobile:7010/v1/mobile/games/quiz/random",
       expect.objectContaining({ method: "GET" }),
     );
 
@@ -405,7 +405,7 @@ describe("proxy routes", () => {
 
     expect(response.statusCode).toBe(200);
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://bff-mobile:7010/v1/mobile/games/quiz/random?language=es",
+      "http://bff-mobile:7010/v1/mobile/games/quiz/random",
       expect.objectContaining({ method: "GET" }),
     );
 
@@ -444,8 +444,8 @@ describe("proxy routes", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const calledUrl = String(fetchMock.mock.calls[0]?.[0]);
     expect(calledUrl).toContain("http://bff-mobile:7010/v1/mobile/games/quiz/random?");
-    expect(calledUrl).toContain("language=es");
     expect(calledUrl).toContain("count=2");
+    expect(calledUrl).not.toContain("language=");
 
     await app.close();
   });
@@ -1158,7 +1158,7 @@ describe("proxy routes", () => {
 
     expect(response.statusCode).toBe(200);
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://192.168.1.50:17001/generate/quiz?query=planetas&language=es",
+      "http://192.168.1.50:17001/generate/quiz?query=planetas",
       expect.objectContaining({
         method: "POST",
         headers: expect.objectContaining({
@@ -1224,7 +1224,7 @@ describe("proxy routes", () => {
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
-      "http://ai-engine-api:8001/generate/word-pass?query=capitales&language=es",
+      "http://ai-engine-api:8001/generate/word-pass?query=capitales",
       expect.objectContaining({ method: "POST" }),
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
