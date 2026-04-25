@@ -7,7 +7,7 @@ import {
   extractForwardHeaders,
   forwardHttp,
 } from "@axiomnode/shared-sdk-client/proxy";
-import { LeaderboardQuerySchema } from "@axiomnode/shared-sdk-client/contracts";
+import { LeaderboardQuerySchema } from "@axiomnode/shared-sdk-client";
 import { z } from "zod";
 
 import type { AppConfig } from "../config.js";
@@ -28,6 +28,11 @@ const MobileRandomQuerySchema = z.object({
   categoryId: z.string().min(1).optional(),
   count: z.coerce.number().int().positive().max(50).optional(),
 }).strict();
+
+function omitLanguageQuery<T extends Record<string, unknown>>(query: T): Omit<T, "language"> {
+  const { language: _language, ...rest } = query;
+  return rest;
+}
 
 function normalizeAiEngineHost(raw: string): string {
   const trimmed = raw.trim().replace(/^https?:\/\//i, "").replace(/\/+$/, "");
@@ -272,12 +277,20 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.post("/internal/ai-engine/generate/quiz", async (request, reply) => {
-    const url = buildUrl(getAiEngineApiBaseUrl(config, routingStore), "/generate/quiz", request.query as Record<string, unknown>);
+    const url = buildUrl(
+      getAiEngineApiBaseUrl(config, routingStore),
+      "/generate/quiz",
+      omitLanguageQuery((request.query as Record<string, unknown>) ?? {}),
+    );
     await forwardRequest(request, reply, url, "POST", upstreamGenerationTimeoutMs, getBreakerForUrl(getAiEngineApiBaseUrl(config, routingStore)));
   });
 
   app.post("/internal/ai-engine/generate/word-pass", async (request, reply) => {
-    const url = buildUrl(getAiEngineApiBaseUrl(config, routingStore), "/generate/word-pass", request.query as Record<string, unknown>);
+    const url = buildUrl(
+      getAiEngineApiBaseUrl(config, routingStore),
+      "/generate/word-pass",
+      omitLanguageQuery((request.query as Record<string, unknown>) ?? {}),
+    );
     await forwardRequest(request, reply, url, "POST", upstreamGenerationTimeoutMs, getBreakerForUrl(getAiEngineApiBaseUrl(config, routingStore)));
   });
 
@@ -350,7 +363,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
       return sendValidationError(reply, parsedQuery.error);
     }
 
-    const url = buildUrl(config.BFF_MOBILE_URL, "/v1/mobile/games/quiz/random", parsedQuery.data);
+    const url = buildUrl(config.BFF_MOBILE_URL, "/v1/mobile/games/quiz/random", omitLanguageQuery(parsedQuery.data));
     await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, mobileBreaker);
   });
 
@@ -360,7 +373,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
       return sendValidationError(reply, parsedQuery.error);
     }
 
-    const url = buildUrl(config.BFF_MOBILE_URL, "/v1/mobile/games/wordpass/random", parsedQuery.data);
+    const url = buildUrl(config.BFF_MOBILE_URL, "/v1/mobile/games/wordpass/random", omitLanguageQuery(parsedQuery.data));
     await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, mobileBreaker);
   });
 
