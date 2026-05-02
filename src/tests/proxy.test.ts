@@ -1267,6 +1267,7 @@ describe("proxy routes", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ roles: [] }), { status: 200, headers: { "content-type": "application/json" } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ firebaseUid: "uid-1", role: "admin" }), { status: 200, headers: { "content-type": "application/json" } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ services: [] }), { status: 200, headers: { "content-type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ enabled: true, cluster: { nodeCount: 1 } }), { status: 200, headers: { "content-type": "application/json" } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ total: 1, metrics: [] }), { status: 200, headers: { "content-type": "application/json" } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ total: 1, logs: [] }), { status: 200, headers: { "content-type": "application/json" } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ total: 1, items: [] }), { status: 200, headers: { "content-type": "application/json" } }));
@@ -1295,6 +1296,7 @@ describe("proxy routes", () => {
     const roles = await app.inject({ method: "GET", url: "/v1/backoffice/admin/users/roles", headers: commonHeaders });
     const patchRole = await app.inject({ method: "PATCH", url: "/v1/backoffice/admin/users/roles/uid-1", headers: commonHeaders, payload: { role: "admin" } });
     const services = await app.inject({ method: "GET", url: "/v1/backoffice/services", headers: commonHeaders });
+    const kubernetesOverview = await app.inject({ method: "GET", url: "/v1/backoffice/kubernetes/overview", headers: commonHeaders });
     const metrics = await app.inject({ method: "GET", url: "/v1/backoffice/services/microservice-quiz/metrics?limit=5", headers: commonHeaders });
     const logs = await app.inject({ method: "GET", url: "/v1/backoffice/services/microservice-quiz/logs?limit=10", headers: commonHeaders });
     const data = await app.inject({ method: "GET", url: "/v1/backoffice/services/microservice-quiz/data?dataset=history&page=2", headers: commonHeaders });
@@ -1306,6 +1308,7 @@ describe("proxy routes", () => {
     expect(roles.statusCode).toBe(200);
     expect(patchRole.statusCode).toBe(200);
     expect(services.statusCode).toBe(200);
+    expect(kubernetesOverview.statusCode).toBe(200);
     expect(metrics.statusCode).toBe(200);
     expect(logs.statusCode).toBe(200);
     expect(data.statusCode).toBe(200);
@@ -1317,9 +1320,10 @@ describe("proxy routes", () => {
     expect(fetchMock).toHaveBeenNthCalledWith(5, "http://bff-backoffice:7011/v1/backoffice/admin/users/roles", expect.objectContaining({ method: "GET" }));
     expect(fetchMock).toHaveBeenNthCalledWith(6, "http://bff-backoffice:7011/v1/backoffice/admin/users/roles/uid-1", expect.objectContaining({ method: "PATCH" }));
     expect(fetchMock).toHaveBeenNthCalledWith(7, "http://bff-backoffice:7011/v1/backoffice/services", expect.objectContaining({ method: "GET" }));
-    expect(fetchMock).toHaveBeenNthCalledWith(8, "http://bff-backoffice:7011/v1/backoffice/services/microservice-quiz/metrics?limit=5", expect.objectContaining({ method: "GET" }));
-    expect(fetchMock).toHaveBeenNthCalledWith(9, "http://bff-backoffice:7011/v1/backoffice/services/microservice-quiz/logs?limit=10", expect.objectContaining({ method: "GET" }));
-    expect(fetchMock).toHaveBeenNthCalledWith(10, "http://bff-backoffice:7011/v1/backoffice/services/microservice-quiz/data?dataset=history&page=2", expect.objectContaining({ method: "GET" }));
+    expect(fetchMock).toHaveBeenNthCalledWith(8, "http://bff-backoffice:7011/v1/backoffice/kubernetes/overview", expect.objectContaining({ method: "GET" }));
+    expect(fetchMock).toHaveBeenNthCalledWith(9, "http://bff-backoffice:7011/v1/backoffice/services/microservice-quiz/metrics?limit=5", expect.objectContaining({ method: "GET" }));
+    expect(fetchMock).toHaveBeenNthCalledWith(10, "http://bff-backoffice:7011/v1/backoffice/services/microservice-quiz/logs?limit=10", expect.objectContaining({ method: "GET" }));
+    expect(fetchMock).toHaveBeenNthCalledWith(11, "http://bff-backoffice:7011/v1/backoffice/services/microservice-quiz/data?dataset=history&page=2", expect.objectContaining({ method: "GET" }));
 
     await app.close();
   });
