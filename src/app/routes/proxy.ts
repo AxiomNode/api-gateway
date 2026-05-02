@@ -30,7 +30,8 @@ const MobileRandomQuerySchema = z.object({
 }).strict();
 
 function omitLanguageQuery<T extends Record<string, unknown>>(query: T): Omit<T, "language"> {
-  const { language: _language, ...rest } = query;
+  const rest = { ...query };
+  delete rest.language;
   return rest;
 }
 
