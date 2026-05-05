@@ -1,8 +1,12 @@
 # Architecture
 
-## Scope
+Last updated: 2026-05-03.
+
+## Purpose
 
 This section documents the repository-local architecture of `api-gateway`.
+
+## Scope
 
 It should describe:
 
