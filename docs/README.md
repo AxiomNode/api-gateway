@@ -1,5 +1,7 @@
 # api-gateway docs
 
+Last updated: 2026-05-03.
+
 Technical documentation for the AxiomNode edge gateway.
 
 ## Purpose
@@ -10,7 +12,7 @@ This local docs folder explains the concrete implementation surface of `api-gate
 - route forwarding behavior owned by this repository
 - local operational workflow and gateway-managed runtime state
 
-## Contents
+## Navigation
 
 - `architecture/README.md`: repository-local architecture boundary and dependency model.
 - `guides/README.md`: route-shaping, integration, and versioning guidance.
@@ -21,6 +23,11 @@ This local docs folder explains the concrete implementation surface of `api-gate
 1. Start with `architecture/README.md`.
 2. Continue with `guides/README.md` when changing routes or forwarding behavior.
 3. Use `operations/README.md` for local run and troubleshooting.
+
+## When to use this
+
+- when the central platform docs are too broad for a gateway-local change
+- when you need the repository-local navigation entry for architecture, guides, and operations
 
 ## CI/CD reference
 
