@@ -822,6 +822,130 @@ describe("proxy routes", () => {
     await app.close();
   });
 
+  it("forwards ai-engine capability and connection requests to bff-backoffice", async () => {
+    const app = Fastify();
+
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ status: "ready", runtime: { models: ["qwen"] } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ presets: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ presets: [{ id: "preset-3" }] }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ presets: [{ id: "preset-3", name: "Updated" }] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ activePresetId: "preset-3" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ deleted: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    await proxyRoutes(app, withStateFile({
+      SERVICE_NAME: "api-gateway",
+      SERVICE_PORT: 7005,
+      NODE_ENV: "test",
+      ALLOWED_ORIGINS: "http://localhost:3000",
+      BFF_MOBILE_URL: "http://bff-mobile:7010",
+      BFF_BACKOFFICE_URL: "http://bff-backoffice:7011",
+      EDGE_API_TOKEN: "edge-secret",
+    }));
+
+    const headers = { authorization: "Bearer edge-secret" };
+    const capabilityResponse = await app.inject({
+      method: "GET",
+      url: "/v1/backoffice/ai-engine/plugin/capabilities",
+      headers,
+    });
+    const getResponse = await app.inject({ method: "GET", url: "/v1/backoffice/ai-engine/connections", headers });
+    const postResponse = await app.inject({
+      method: "POST",
+      url: "/v1/backoffice/ai-engine/connections",
+      headers,
+      payload: { name: "Preset 3", host: "llama.example.com", protocol: "https", port: 443 },
+    });
+    const putResponse = await app.inject({
+      method: "PUT",
+      url: "/v1/backoffice/ai-engine/connections/preset-3",
+      headers,
+      payload: { name: "Updated", host: "llama.example.com", protocol: "https", port: 443 },
+    });
+    const activateResponse = await app.inject({
+      method: "POST",
+      url: "/v1/backoffice/ai-engine/connections/preset-3/activate",
+      headers,
+    });
+    const deleteResponse = await app.inject({
+      method: "DELETE",
+      url: "/v1/backoffice/ai-engine/connections/preset-3",
+      headers,
+    });
+
+    expect(capabilityResponse.statusCode).toBe(200);
+    expect(getResponse.statusCode).toBe(200);
+    expect(postResponse.statusCode).toBe(201);
+    expect(putResponse.statusCode).toBe(200);
+    expect(activateResponse.statusCode).toBe(200);
+    expect(deleteResponse.statusCode).toBe(200);
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "http://bff-backoffice:7011/v1/backoffice/ai-engine/plugin/capabilities",
+      expect.objectContaining({ method: "GET" }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "http://bff-backoffice:7011/v1/backoffice/ai-engine/connections",
+      expect.objectContaining({ method: "GET" }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      "http://bff-backoffice:7011/v1/backoffice/ai-engine/connections",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      4,
+      "http://bff-backoffice:7011/v1/backoffice/ai-engine/connections/preset-3",
+      expect.objectContaining({ method: "PUT" }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      5,
+      "http://bff-backoffice:7011/v1/backoffice/ai-engine/connections/preset-3/activate",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      6,
+      "http://bff-backoffice:7011/v1/backoffice/ai-engine/connections/preset-3",
+      expect.objectContaining({ method: "DELETE" }),
+    );
+
+    await app.close();
+  });
+
   it("forwards ai diagnostics routes to bff-backoffice", async () => {
     const app = Fastify();
 
@@ -1548,6 +1672,7 @@ describe("proxy routes", () => {
       app.inject({ method: "PATCH", url: "/v1/backoffice/admin/users/roles/uid-1" }),
       app.inject({ method: "GET", url: "/v1/backoffice/services/operational-summary" }),
       app.inject({ method: "GET", url: "/v1/backoffice/ai-engine/target" }),
+      app.inject({ method: "GET", url: "/v1/backoffice/ai-engine/plugin/capabilities" }),
       app.inject({ method: "PUT", url: "/v1/backoffice/ai-engine/target" }),
       app.inject({ method: "DELETE", url: "/v1/backoffice/ai-engine/target" }),
       app.inject({ method: "GET", url: "/v1/backoffice/ai-engine/presets" }),
@@ -1555,6 +1680,11 @@ describe("proxy routes", () => {
       app.inject({ method: "PUT", url: "/v1/backoffice/ai-engine/presets/preset-1" }),
       app.inject({ method: "DELETE", url: "/v1/backoffice/ai-engine/presets/preset-1" }),
       app.inject({ method: "POST", url: "/v1/backoffice/ai-engine/probe" }),
+      app.inject({ method: "GET", url: "/v1/backoffice/ai-engine/connections" }),
+      app.inject({ method: "POST", url: "/v1/backoffice/ai-engine/connections" }),
+      app.inject({ method: "PUT", url: "/v1/backoffice/ai-engine/connections/preset-1" }),
+      app.inject({ method: "DELETE", url: "/v1/backoffice/ai-engine/connections/preset-1" }),
+      app.inject({ method: "POST", url: "/v1/backoffice/ai-engine/connections/preset-1/activate" }),
       app.inject({ method: "GET", url: "/v1/backoffice/ai-diagnostics/rag/stats" }),
       app.inject({ method: "POST", url: "/v1/backoffice/ai-diagnostics/tests/run", payload: {} }),
       app.inject({ method: "GET", url: "/v1/backoffice/ai-diagnostics/tests/status" }),

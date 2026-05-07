@@ -479,6 +479,15 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
     await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, backofficeBreaker);
   });
 
+  app.get("/v1/backoffice/ai-engine/plugin/capabilities", async (request, reply) => {
+    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+      return;
+    }
+
+    const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/ai-engine/plugin/capabilities", {});
+    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, backofficeBreaker);
+  });
+
   app.put("/v1/backoffice/ai-engine/target", async (request, reply) => {
     if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
       return;
@@ -549,6 +558,66 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
     }
 
     const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/ai-engine/probe", {});
+    await forwardRequest(request, reply, url, "POST", upstreamTimeoutMs, backofficeBreaker);
+  });
+
+  app.get("/v1/backoffice/ai-engine/connections", async (request, reply) => {
+    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+      return;
+    }
+
+    const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/ai-engine/connections", {});
+    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, backofficeBreaker);
+  });
+
+  app.post("/v1/backoffice/ai-engine/connections", async (request, reply) => {
+    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+      return;
+    }
+
+    const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/ai-engine/connections", {});
+    await forwardRequest(request, reply, url, "POST", upstreamTimeoutMs, backofficeBreaker);
+  });
+
+  app.put("/v1/backoffice/ai-engine/connections/:presetId", async (request, reply) => {
+    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+      return;
+    }
+
+    const params = request.params as { presetId: string };
+    const url = buildUrl(
+      config.BFF_BACKOFFICE_URL,
+      `/v1/backoffice/ai-engine/connections/${encodeURIComponent(params.presetId)}`,
+      {},
+    );
+    await forwardRequest(request, reply, url, "PUT", upstreamTimeoutMs, backofficeBreaker);
+  });
+
+  app.delete("/v1/backoffice/ai-engine/connections/:presetId", async (request, reply) => {
+    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+      return;
+    }
+
+    const params = request.params as { presetId: string };
+    const url = buildUrl(
+      config.BFF_BACKOFFICE_URL,
+      `/v1/backoffice/ai-engine/connections/${encodeURIComponent(params.presetId)}`,
+      {},
+    );
+    await forwardRequest(request, reply, url, "DELETE", upstreamTimeoutMs, backofficeBreaker);
+  });
+
+  app.post("/v1/backoffice/ai-engine/connections/:presetId/activate", async (request, reply) => {
+    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+      return;
+    }
+
+    const params = request.params as { presetId: string };
+    const url = buildUrl(
+      config.BFF_BACKOFFICE_URL,
+      `/v1/backoffice/ai-engine/connections/${encodeURIComponent(params.presetId)}/activate`,
+      {},
+    );
     await forwardRequest(request, reply, url, "POST", upstreamTimeoutMs, backofficeBreaker);
   });
 
