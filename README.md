@@ -1,6 +1,6 @@
 # api-gateway
 
-Last updated: 2026-05-03.
+Last updated: 2026-05-08.
 
 [![codecov](https://codecov.io/gh/AxiomNode/api-gateway/branch/main/graph/badge.svg)](https://codecov.io/gh/AxiomNode/api-gateway)
 
@@ -45,6 +45,8 @@ flowchart LR
 That third role matters operationally because the gateway can expose stable internal AI routes while the actual AI upstream host changes over time.
 
 Route inventory, forwarding semantics, and runtime target behavior are documented in the local docs and in the public-edge capability dossier so this README can stay focused on repository role.
+
+Backoffice role routes are forwarded without owning role policy. `GET /v1/backoffice/admin/users/roles` can be used by `SuperAdmin` and `Inspector` after downstream validation, while role mutation remains a `SuperAdmin` operation in `microservice-users`.
 
 ## Local setup
 
