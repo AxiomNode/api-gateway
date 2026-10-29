@@ -86,3 +86,29 @@ describe("RateLimiter", () => {
     }
   });
 });
+
+describe("RateLimiter defaults and eviction", () => {
+  it("falls back to built-in limits when the optional settings are absent", () => {
+    const limiter = new RateLimiter({ ...baseConfig } as never);
+    expect(limiter.isEnabled()).toBe(true);
+    expect(limiter.limitFor("default").max).toBe(120);
+    expect(limiter.limitFor("generation").max).toBe(10);
+    expect(limiter.limitFor("auth").max).toBe(30);
+    expect(limiter.limitFor("admin").max).toBe(30);
+    expect(limiter.limitFor("default").windowMs).toBe(60_000);
+  });
+
+  it("evicts expired buckets once the tracked-key cap is exceeded", () => {
+    const limiter = new RateLimiter({ ...baseConfig, RATE_LIMIT_MAX_TRACKED_KEYS: 2 } as never);
+    limiter.consume("a", "default", 0);
+    limiter.consume("b", "default", 0);
+    limiter.consume("c", "default", 120_000);
+    expect(limiter.size()).toBe(1);
+  });
+
+  it("does not track buckets when disabled", () => {
+    const limiter = new RateLimiter({ ...baseConfig, RATE_LIMIT_ENABLED: false } as never);
+    expect(limiter.consume("a", "default").allowed).toBe(true);
+    expect(limiter.size()).toBe(0);
+  });
+});
