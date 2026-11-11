@@ -12,6 +12,7 @@ import { z } from "zod";
 
 import type { AppConfig } from "../config.js";
 import { RoutingStateStore } from "../services/routingStateStore.js";
+import { bearerMatches, headerMatches, isPermissiveEnv, isTargetHostAllowed } from "../services/security.js";
 
 /** @module proxy — Reverse-proxy routes forwarding requests to BFF-Mobile and BFF-Backoffice with circuit breakers. */
 
@@ -107,7 +108,13 @@ function getAiEngineTarget(config: AppConfig, routingStore: RoutingStateStore) {
 }
 
 async function applyAiEngineTarget(config: AppConfig, routingStore: RoutingStateStore, input: z.infer<typeof AiEngineTargetSchema>): Promise<void> {
+  if (input.protocol !== "http" && input.protocol !== "https") {
+    throw new Error("protocol must be http or https");
+  }
   const host = normalizeAiEngineHost(input.host);
+  if (!isTargetHostAllowed(host, config.ALLOWED_ROUTING_TARGET_HOSTS, config.NODE_ENV)) {
+    throw new Error("host is not in ALLOWED_ROUTING_TARGET_HOSTS");
+  }
   const label = input.label?.trim() || undefined;
   const updatedAt = new Date().toISOString();
 
@@ -128,24 +135,49 @@ async function resetAiEngineTarget(routingStore: RoutingStateStore): Promise<voi
   await routingStore.delete("ai-engine-stats");
 }
 
+/**
+ * Fail-closed bearer check. An empty token is only tolerated in development/test
+ * (a warning is logged at startup); any other NODE_ENV rejects the request.
+ */
 function isGatewayAdminAuthorized(request: FastifyRequest, config: AppConfig): boolean {
   const token = config.API_GATEWAY_ADMIN_TOKEN?.trim();
   if (!token) {
-    return true;
+    return isPermissiveEnv(config.NODE_ENV);
   }
 
-  return request.headers.authorization === `Bearer ${token}`;
+  return bearerMatches(request.headers.authorization, token);
 }
 
-function checkEdgeAuth(request: FastifyRequest, reply: FastifyReply, edgeApiToken: string): boolean {
+function checkEdgeAuth(request: FastifyRequest, reply: FastifyReply, config: AppConfig): boolean {
+  const edgeApiToken = config.EDGE_API_TOKEN?.trim();
   if (!edgeApiToken) {
-    return true;
+    if (isPermissiveEnv(config.NODE_ENV)) {
+      return true;
+    }
+    reply.code(503).send({ error: "Edge authentication is not configured" });
+    return false;
   }
 
-  const authorization = request.headers.authorization;
-  const expected = `Bearer ${edgeApiToken}`;
+  if (!bearerMatches(request.headers.authorization, edgeApiToken)) {
+    reply.code(401).send({ error: "Unauthorized" });
+    return false;
+  }
 
-  if (authorization !== expected) {
+  return true;
+}
+
+/** Service-to-service auth for /internal/ai-engine/* via the x-internal-token header. */
+function checkInternalAuth(request: FastifyRequest, reply: FastifyReply, config: AppConfig): boolean {
+  const token = config.INTERNAL_SERVICE_TOKEN?.trim();
+  if (!token) {
+    if (isPermissiveEnv(config.NODE_ENV)) {
+      return true;
+    }
+    reply.code(503).send({ error: "Internal service authentication is not configured" });
+    return false;
+  }
+
+  if (!headerMatches(request.headers["x-internal-token"], token)) {
     reply.code(401).send({ error: "Unauthorized" });
     return false;
   }
@@ -278,6 +310,10 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.post("/internal/ai-engine/generate/quiz", async (request, reply) => {
+    if (!checkInternalAuth(request, reply, config)) {
+      return;
+    }
+
     const url = buildUrl(
       getAiEngineApiBaseUrl(config, routingStore),
       "/generate/quiz",
@@ -287,6 +323,10 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.post("/internal/ai-engine/generate/word-pass", async (request, reply) => {
+    if (!checkInternalAuth(request, reply, config)) {
+      return;
+    }
+
     const url = buildUrl(
       getAiEngineApiBaseUrl(config, routingStore),
       "/generate/word-pass",
@@ -296,32 +336,52 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.post("/internal/ai-engine/ingest/quiz", async (request, reply) => {
+    if (!checkInternalAuth(request, reply, config)) {
+      return;
+    }
+
     const url = buildUrl(getAiEngineApiBaseUrl(config, routingStore), "/ingest/quiz", {});
     await forwardRequest(request, reply, url, "POST", upstreamGenerationTimeoutMs, getBreakerForUrl(getAiEngineApiBaseUrl(config, routingStore)));
   });
 
   app.post("/internal/ai-engine/ingest/word-pass", async (request, reply) => {
+    if (!checkInternalAuth(request, reply, config)) {
+      return;
+    }
+
     const url = buildUrl(getAiEngineApiBaseUrl(config, routingStore), "/ingest/word-pass", {});
     await forwardRequest(request, reply, url, "POST", upstreamGenerationTimeoutMs, getBreakerForUrl(getAiEngineApiBaseUrl(config, routingStore)));
   });
 
   app.get("/internal/ai-engine/catalogs", async (request, reply) => {
+    if (!checkInternalAuth(request, reply, config)) {
+      return;
+    }
+
     const url = buildUrl(getAiEngineApiBaseUrl(config, routingStore), "/catalogs", {});
     await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, getBreakerForUrl(getAiEngineApiBaseUrl(config, routingStore)));
   });
 
   app.get("/internal/ai-engine/health", async (request, reply) => {
+    if (!checkInternalAuth(request, reply, config)) {
+      return;
+    }
+
     const url = buildUrl(getAiEngineApiBaseUrl(config, routingStore), "/health", {});
     await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, getBreakerForUrl(getAiEngineApiBaseUrl(config, routingStore)));
   });
 
   app.get("/internal/ai-engine/stats", async (request, reply) => {
+    if (!checkInternalAuth(request, reply, config)) {
+      return;
+    }
+
     const url = buildUrl(getAiEngineStatsBaseUrl(config, routingStore), "/stats", request.query as Record<string, unknown>);
     await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, getBreakerForUrl(getAiEngineStatsBaseUrl(config, routingStore)));
   });
 
   app.post("/v1/backoffice/auth/session", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+    if (!checkEdgeAuth(request, reply, config)) {
       return;
     }
 
@@ -330,7 +390,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.get("/v1/backoffice/auth/me", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+    if (!checkEdgeAuth(request, reply, config)) {
       return;
     }
 
@@ -389,7 +449,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.get("/v1/backoffice/users/leaderboard", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+    if (!checkEdgeAuth(request, reply, config)) {
       return;
     }
 
@@ -403,7 +463,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.get("/v1/backoffice/monitor/stats", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+    if (!checkEdgeAuth(request, reply, config)) {
       return;
     }
 
@@ -412,7 +472,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.post("/v1/backoffice/users/events/manual", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+    if (!checkEdgeAuth(request, reply, config)) {
       return;
     }
 
@@ -421,7 +481,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.get("/v1/backoffice/admin/users/roles", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+    if (!checkEdgeAuth(request, reply, config)) {
       return;
     }
 
@@ -430,7 +490,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.patch("/v1/backoffice/admin/users/roles/:firebaseUid", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+    if (!checkEdgeAuth(request, reply, config)) {
       return;
     }
 
@@ -444,7 +504,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.get("/v1/backoffice/services", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+    if (!checkEdgeAuth(request, reply, config)) {
       return;
     }
 
@@ -453,7 +513,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.get("/v1/backoffice/services/operational-summary", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+    if (!checkEdgeAuth(request, reply, config)) {
       return;
     }
 
@@ -462,7 +522,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.get("/v1/backoffice/kubernetes/overview", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+    if (!checkEdgeAuth(request, reply, config)) {
       return;
     }
 
@@ -471,7 +531,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.get("/v1/backoffice/ai-engine/target", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+    if (!checkEdgeAuth(request, reply, config)) {
       return;
     }
 
@@ -480,7 +540,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.get("/v1/backoffice/ai-engine/plugin/capabilities", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+    if (!checkEdgeAuth(request, reply, config)) {
       return;
     }
 
@@ -489,7 +549,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.put("/v1/backoffice/ai-engine/target", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+    if (!checkEdgeAuth(request, reply, config)) {
       return;
     }
 
@@ -498,7 +558,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.delete("/v1/backoffice/ai-engine/target", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+    if (!checkEdgeAuth(request, reply, config)) {
       return;
     }
 
@@ -507,7 +567,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.get("/v1/backoffice/ai-engine/presets", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+    if (!checkEdgeAuth(request, reply, config)) {
       return;
     }
 
@@ -516,7 +576,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.post("/v1/backoffice/ai-engine/presets", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+    if (!checkEdgeAuth(request, reply, config)) {
       return;
     }
 
@@ -525,7 +585,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.put("/v1/backoffice/ai-engine/presets/:presetId", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+    if (!checkEdgeAuth(request, reply, config)) {
       return;
     }
 
@@ -539,7 +599,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.delete("/v1/backoffice/ai-engine/presets/:presetId", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+    if (!checkEdgeAuth(request, reply, config)) {
       return;
     }
 
@@ -553,7 +613,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.post("/v1/backoffice/ai-engine/probe", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+    if (!checkEdgeAuth(request, reply, config)) {
       return;
     }
 
@@ -562,7 +622,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.get("/v1/backoffice/ai-engine/connections", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+    if (!checkEdgeAuth(request, reply, config)) {
       return;
     }
 
@@ -571,7 +631,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.post("/v1/backoffice/ai-engine/connections", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+    if (!checkEdgeAuth(request, reply, config)) {
       return;
     }
 
@@ -580,7 +640,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.put("/v1/backoffice/ai-engine/connections/:presetId", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+    if (!checkEdgeAuth(request, reply, config)) {
       return;
     }
 
@@ -594,7 +654,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.delete("/v1/backoffice/ai-engine/connections/:presetId", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+    if (!checkEdgeAuth(request, reply, config)) {
       return;
     }
 
@@ -608,7 +668,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.post("/v1/backoffice/ai-engine/connections/:presetId/activate", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+    if (!checkEdgeAuth(request, reply, config)) {
       return;
     }
 
@@ -622,7 +682,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.get("/v1/backoffice/ai-diagnostics/rag/stats", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+    if (!checkEdgeAuth(request, reply, config)) {
       return;
     }
 
@@ -631,7 +691,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.post("/v1/backoffice/ai-diagnostics/tests/run", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+    if (!checkEdgeAuth(request, reply, config)) {
       return;
     }
 
@@ -640,7 +700,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.get("/v1/backoffice/ai-diagnostics/tests/status", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+    if (!checkEdgeAuth(request, reply, config)) {
       return;
     }
 
@@ -649,7 +709,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.get("/v1/backoffice/service-targets", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+    if (!checkEdgeAuth(request, reply, config)) {
       return;
     }
 
@@ -658,7 +718,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.put("/v1/backoffice/service-targets/:service", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+    if (!checkEdgeAuth(request, reply, config)) {
       return;
     }
 
@@ -672,7 +732,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.delete("/v1/backoffice/service-targets/:service", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+    if (!checkEdgeAuth(request, reply, config)) {
       return;
     }
 
@@ -686,7 +746,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.get("/v1/backoffice/services/:service/metrics", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+    if (!checkEdgeAuth(request, reply, config)) {
       return;
     }
 
@@ -700,7 +760,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.get("/v1/backoffice/services/:service/logs", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+    if (!checkEdgeAuth(request, reply, config)) {
       return;
     }
 
@@ -714,7 +774,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.get("/v1/backoffice/services/:service/data", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+    if (!checkEdgeAuth(request, reply, config)) {
       return;
     }
 
@@ -728,7 +788,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.get("/v1/backoffice/services/:service/catalogs", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+    if (!checkEdgeAuth(request, reply, config)) {
       return;
     }
 
@@ -742,7 +802,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.post("/v1/backoffice/services/:service/data", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+    if (!checkEdgeAuth(request, reply, config)) {
       return;
     }
 
@@ -756,7 +816,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.patch("/v1/backoffice/services/:service/data/:entryId", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+    if (!checkEdgeAuth(request, reply, config)) {
       return;
     }
 
@@ -770,7 +830,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.post("/v1/backoffice/services/:service/generation/process", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+    if (!checkEdgeAuth(request, reply, config)) {
       return;
     }
 
@@ -784,7 +844,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.post("/v1/backoffice/services/:service/generation/wait", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+    if (!checkEdgeAuth(request, reply, config)) {
       return;
     }
 
@@ -798,7 +858,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.get("/v1/backoffice/services/:service/generation/processes", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+    if (!checkEdgeAuth(request, reply, config)) {
       return;
     }
 
@@ -812,7 +872,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.get("/v1/backoffice/services/:service/generation/process/:taskId", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+    if (!checkEdgeAuth(request, reply, config)) {
       return;
     }
 
@@ -826,7 +886,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.get("/v1/backoffice/services/:service/generation/worker", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+    if (!checkEdgeAuth(request, reply, config)) {
       return;
     }
 
@@ -840,7 +900,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.post("/v1/backoffice/services/:service/generation/worker/start", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+    if (!checkEdgeAuth(request, reply, config)) {
       return;
     }
 
@@ -854,7 +914,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.post("/v1/backoffice/services/:service/generation/worker/stop", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+    if (!checkEdgeAuth(request, reply, config)) {
       return;
     }
 
@@ -868,7 +928,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   });
 
   app.delete("/v1/backoffice/services/:service/data/:entryId", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config.EDGE_API_TOKEN)) {
+    if (!checkEdgeAuth(request, reply, config)) {
       return;
     }
 

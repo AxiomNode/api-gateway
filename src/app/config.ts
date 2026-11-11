@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { assertSecureConfig, parseTrustProxy } from "./services/security.js";
+
 /** @module config — Environment-based configuration loader for the API Gateway. */
 
 const ConfigSchema = z.object({
@@ -18,6 +20,21 @@ const ConfigSchema = z.object({
   GATEWAY_ROUTING_STATE_FILE: z.string().min(1).optional(),
   ALLOWED_ROUTING_TARGET_HOSTS: z.string().min(1).optional(),
   API_GATEWAY_ADMIN_TOKEN: z.string().optional(),
+  INTERNAL_SERVICE_TOKEN: z.string().optional(),
+  TRUST_PROXY: z
+    .string()
+    .optional()
+    .refine(
+      (value) => {
+        try {
+          parseTrustProxy(value);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      { message: "must be true, false, a hop count (1-32) or comma-separated IPs/CIDRs" },
+    ),
   RATE_LIMIT_ENABLED: z
     .string()
     .optional()
@@ -43,6 +60,8 @@ export type AppConfig = Omit<
   | "GATEWAY_ROUTING_STATE_FILE"
   | "ALLOWED_ROUTING_TARGET_HOSTS"
   | "API_GATEWAY_ADMIN_TOKEN"
+  | "INTERNAL_SERVICE_TOKEN"
+  | "TRUST_PROXY"
   | "RATE_LIMIT_ENABLED"
   | "RATE_LIMIT_WINDOW_MS"
   | "RATE_LIMIT_DEFAULT_MAX"
@@ -59,6 +78,8 @@ export type AppConfig = Omit<
   GATEWAY_ROUTING_STATE_FILE?: string;
   ALLOWED_ROUTING_TARGET_HOSTS?: string;
   API_GATEWAY_ADMIN_TOKEN?: string;
+  INTERNAL_SERVICE_TOKEN?: string;
+  TRUST_PROXY?: string;
   RATE_LIMIT_ENABLED?: boolean;
   RATE_LIMIT_WINDOW_MS?: number;
   RATE_LIMIT_DEFAULT_MAX?: number;
@@ -74,5 +95,6 @@ export function loadConfig(): AppConfig {
   if (!parsed.success) {
     throw new Error(`Invalid gateway configuration: ${JSON.stringify(parsed.error.flatten().fieldErrors)}`);
   }
+  assertSecureConfig(parsed.data);
   return parsed.data;
 }
