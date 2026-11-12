@@ -15,12 +15,17 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   codeql:
     name: CodeQL (javascript-typescript)
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     # CodeQL needs to upload SARIF results (`security-events: write`) and read
     # workflow metadata (`actions: read`), but no broader repository writes.
@@ -41,6 +46,7 @@ jobs:
 
   trivy-fs:
     name: Trivy filesystem scan
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
