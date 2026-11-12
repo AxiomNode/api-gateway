@@ -46,6 +46,8 @@ That third role matters operationally because the gateway can expose stable inte
 
 Route inventory, forwarding semantics, and runtime target behavior are documented in the local docs and in the public-edge capability dossier so this README can stay focused on repository role.
 
+Plain forwarding routes use the shared SDK raw passthrough (`forwardHttpRaw`): request and response bodies travel as the original bytes, with no JSON parse/serialize at the gateway, and the upstream timeout covers reading the body. Routes that validate input (mobile quiz/word-pass random, backoffice leaderboard) keep the JSON mode, and `PUT /internal/admin/ai-engine/target` parses its own body.
+
 Backoffice role routes are forwarded without owning role policy. `GET /v1/backoffice/admin/users/roles` can be used by `SuperAdmin` and `Inspector` after downstream validation, while role mutation remains a `SuperAdmin` operation in `microservice-users`.
 
 ## Local setup

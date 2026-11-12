@@ -2,11 +2,10 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import {
   CircuitBreaker,
   CircuitBreakerOpenError,
-  UpstreamTimeoutError,
   buildUrl,
-  extractForwardHeaders,
   forwardHttp,
 } from "@axiomnode/shared-sdk-client/proxy";
+import { forwardHttpRaw } from "@axiomnode/shared-sdk-client/proxy-raw";
 import { LeaderboardQuerySchema } from "@axiomnode/shared-sdk-client";
 import { z } from "zod";
 
@@ -203,6 +202,16 @@ function sendValidationError(reply: FastifyReply, error: { flatten: () => unknow
   });
 }
 
+/**
+ * How a hop forwards the payload:
+ * - "raw" (default): request and response bodies travel as the original bytes (no JSON.parse/stringify).
+ *   Only for routes where the gateway neither inspects nor modifies the body.
+ * - "json": body parsed and re-serialized by the SDK helper. Kept for routes that validate input.
+ */
+type ForwardMode = "raw" | "json";
+
+const BODYLESS_STATUSES = new Set([204, 205, 304]);
+
 async function forwardRequest(
   request: FastifyRequest,
   reply: FastifyReply,
@@ -210,52 +219,34 @@ async function forwardRequest(
   method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
   timeoutMs: number,
   breaker: CircuitBreaker,
+  mode: ForwardMode = "raw",
 ): Promise<void> {
+  const requestHeaders = request.headers as Record<string, string | undefined>;
+
   try {
-    const result = await breaker.call(async () => {
-      if (method !== "PUT") {
-        return forwardHttp({
-          targetUrl,
-          method,
-          requestHeaders: request.headers as Record<string, string | undefined>,
-          body: request.body,
-          timeoutMs,
-        });
-      }
+    if (mode === "json") {
+      const result = await breaker.call(() =>
+        forwardHttp({ targetUrl, method, requestHeaders, body: request.body, timeoutMs }),
+      );
+      reply.code(result.status);
+      reply.header("content-type", result.contentType);
+      reply.send(result.payload);
+      return;
+    }
 
-      const controller = new AbortController();
-      const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
-
-      try {
-        const response = await fetch(targetUrl, {
-          method,
-          headers: extractForwardHeaders(request.headers as Record<string, string | undefined>, true),
-          body: request.body !== undefined ? JSON.stringify(request.body) : undefined,
-          signal: controller.signal,
-        });
-        const contentType = response.headers.get("content-type") ?? "application/json";
-        const payload = contentType.includes("application/json")
-          ? await response.json().catch(() => ({}))
-          : await response.text();
-
-        return {
-          status: response.status,
-          contentType,
-          payload,
-        };
-      } catch (error) {
-        if (error instanceof Error && error.name === "AbortError") {
-          throw new UpstreamTimeoutError(`Upstream request timed out after ${timeoutMs}ms`);
-        }
-        throw error;
-      } finally {
-        clearTimeout(timeoutHandle);
-      }
-    });
+    // JSON bodies arrive as Buffers (see registerRawJsonBodyParser); Fastify's built-in text/plain parser yields a string.
+    const body =
+      Buffer.isBuffer(request.body) ? request.body : typeof request.body === "string" ? Buffer.from(request.body) : undefined;
+    const result = await breaker.call(() =>
+      forwardHttpRaw({ targetUrl, method, requestHeaders, body, timeoutMs }),
+    );
 
     reply.code(result.status);
     reply.header("content-type", result.contentType);
-    reply.send(result.payload);
+    // JSON mode answered `{}` for an empty JSON body; keep that for clients.
+    const emptyJson =
+      result.body.length === 0 && result.contentType.includes("application/json") && !BODYLESS_STATUSES.has(result.status);
+    reply.send(emptyJson ? "{}" : result.body);
   } catch (error) {
     if (error instanceof CircuitBreakerOpenError) {
       reply.code(503).send({ error: "Service temporarily unavailable" });
@@ -263,6 +254,24 @@ async function forwardRequest(
     }
     throw error;
   }
+}
+
+/**
+ * Makes `application/json` bodies reach the handlers as the original Buffer so raw routes can forward
+ * them untouched. Routes that read `request.body` themselves opt back in to normal JSON parsing with
+ * `config: { parseJsonBody: true }` (same parser and error behaviour as Fastify's default).
+ */
+function registerRawJsonBodyParser(app: FastifyInstance): void {
+  const parseJson = app.getDefaultJsonParser("error", "error");
+  app.removeContentTypeParser("application/json");
+  app.addContentTypeParser("application/json", { parseAs: "buffer" }, (request, body, done) => {
+    const config = request.routeOptions?.config as { parseJsonBody?: boolean } | undefined;
+    if (config?.parseJsonBody) {
+      parseJson(request, (body as Buffer).toString("utf8"), done);
+      return;
+    }
+    done(null, body);
+  });
 }
 
 /** Registers all gateway proxy routes that forward to downstream BFF services. */
@@ -273,6 +282,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
   const backofficeBreaker = getBreakerForUrl(config.BFF_BACKOFFICE_URL);
   const routingStore = new RoutingStateStore(config);
   await routingStore.load();
+  registerRawJsonBodyParser(app);
 
   app.get("/internal/admin/ai-engine/target", async (request, reply) => {
     if (!isGatewayAdminAuthorized(request, config)) {
@@ -282,7 +292,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
     return reply.send(getAiEngineTarget(config, routingStore));
   });
 
-  app.put("/internal/admin/ai-engine/target", async (request, reply) => {
+  app.put("/internal/admin/ai-engine/target", { config: { parseJsonBody: true } }, async (request, reply) => {
     if (!isGatewayAdminAuthorized(request, config)) {
       return reply.code(401).send({ error: "Unauthorized" });
     }
@@ -425,7 +435,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
     }
 
     const url = buildUrl(config.BFF_MOBILE_URL, "/v1/mobile/games/quiz/random", omitLanguageQuery(parsedQuery.data));
-    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, mobileBreaker);
+    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, mobileBreaker, "json");
   });
 
   app.get("/v1/mobile/games/wordpass/random", async (request, reply) => {
@@ -435,7 +445,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
     }
 
     const url = buildUrl(config.BFF_MOBILE_URL, "/v1/mobile/games/wordpass/random", omitLanguageQuery(parsedQuery.data));
-    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, mobileBreaker);
+    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, mobileBreaker, "json");
   });
 
   app.post("/v1/mobile/games/quiz/generate", async (request, reply) => {
@@ -459,7 +469,7 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
     }
 
     const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/users/leaderboard", parsedQuery.data);
-    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, backofficeBreaker);
+    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, backofficeBreaker, "json");
   });
 
   app.get("/v1/backoffice/monitor/stats", async (request, reply) => {

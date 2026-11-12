@@ -8,6 +8,11 @@ import cors from "@fastify/cors";
 import Fastify from "fastify";
 import { proxyRoutes } from "../app/routes/proxy.js";
 
+/** Raw routes forward the request body as the original bytes (Buffer), not as a re-serialized string. */
+function jsonBytes(value: unknown): Buffer {
+  return Buffer.from(JSON.stringify(value));
+}
+
 let tempStateDir = "";
 let defaultStateFile = "";
 
@@ -185,7 +190,7 @@ describe("proxy routes", () => {
       "http://bff-mobile:7010/v1/mobile/player/profile",
       expect.objectContaining({
         method: "PUT",
-        body: JSON.stringify({ preferredLanguage: "es" }),
+        body: jsonBytes({ preferredLanguage: "es" }),
       }),
     );
 
@@ -246,7 +251,7 @@ describe("proxy routes", () => {
       "http://bff-mobile:7010/v1/mobile/games/events",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({
+        body: jsonBytes({
           events: [
             {
               gameId: "g-1",
@@ -365,7 +370,7 @@ describe("proxy routes", () => {
       "http://bff-mobile:7010/v1/mobile/games/quiz/generate",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({ query: "science", language: "es" }),
+        body: jsonBytes({ query: "science", language: "es" }),
         headers: expect.objectContaining({
           authorization: "Bearer edge-secret",
           "x-correlation-id": "corr-post",
@@ -594,7 +599,7 @@ describe("proxy routes", () => {
       "http://bff-backoffice:7011/v1/backoffice/ai-engine/probe",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({
+        body: jsonBytes({
           host: "127.0.0.1",
           protocol: "http",
           port: 7002,
@@ -683,7 +688,7 @@ describe("proxy routes", () => {
       "http://bff-backoffice:7011/v1/backoffice/ai-engine/target",
       expect.objectContaining({
         method: "PUT",
-        body: JSON.stringify({
+        body: jsonBytes({
           host: "127.0.0.1",
           protocol: "http",
           port: 7002,
@@ -792,7 +797,7 @@ describe("proxy routes", () => {
       "http://bff-backoffice:7011/v1/backoffice/ai-engine/presets",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({
+        body: jsonBytes({
           name: "Preset 2",
           host: "10.0.0.5",
           protocol: "http",
@@ -805,7 +810,7 @@ describe("proxy routes", () => {
       "http://bff-backoffice:7011/v1/backoffice/ai-engine/presets/preset-2",
       expect.objectContaining({
         method: "PUT",
-        body: JSON.stringify({
+        body: jsonBytes({
           name: "Preset 2 updated",
           host: "10.0.0.6",
           protocol: "https",
@@ -1012,7 +1017,7 @@ describe("proxy routes", () => {
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
       "http://bff-backoffice:7011/v1/backoffice/ai-diagnostics/tests/run",
-      expect.objectContaining({ method: "POST", body: JSON.stringify({}) }),
+      expect.objectContaining({ method: "POST", body: jsonBytes({}) }),
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       3,
@@ -1793,7 +1798,7 @@ describe("proxy routes", () => {
     await app.close();
   });
 
-  it("handles special PUT proxy responses including text and invalid json payloads", async () => {
+  it("passes PUT upstream responses through untouched, including text and invalid json payloads", async () => {
     const app = Fastify();
 
     const fetchMock = vi.fn()
@@ -1827,7 +1832,8 @@ describe("proxy routes", () => {
     expect(textResponse.statusCode).toBe(202);
     expect(textResponse.body).toBe("updated");
     expect(invalidJsonResponse.statusCode).toBe(200);
-    expect(invalidJsonResponse.json()).toEqual({});
+    // Raw passthrough: the gateway no longer parses upstream JSON, so the bytes reach the client as sent.
+    expect(invalidJsonResponse.body).toBe("not-json");
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
       "http://bff-backoffice:7011/v1/backoffice/ai-engine/target",
@@ -1836,7 +1842,7 @@ describe("proxy routes", () => {
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
       "http://bff-backoffice:7011/v1/backoffice/ai-engine/presets/preset-json",
-      expect.objectContaining({ method: "PUT", body: JSON.stringify({ enabled: true }) }),
+      expect.objectContaining({ method: "PUT", body: jsonBytes({ enabled: true }) }),
     );
 
     await app.close();

@@ -49,6 +49,7 @@ export class RateLimiter {
   private readonly categories: Record<RateLimitCategory, CategoryConfig>;
   private readonly enabled: boolean;
   private readonly maxEntries: number;
+  private lastSweepAt = 0;
 
   constructor(config: AppConfig) {
     this.enabled = config.RATE_LIMIT_ENABLED ?? true;
@@ -86,6 +87,9 @@ export class RateLimiter {
     let bucket = this.buckets.get(bucketKey);
     if (!bucket || now - bucket.windowStart >= cfg.windowMs) {
       bucket = { count: 0, windowStart: now };
+      // Delete first so a reused key moves to the end of the Map's insertion order;
+      // the oldest windows then sit at the front, which makes eviction O(1).
+      this.buckets.delete(bucketKey);
       this.buckets.set(bucketKey, bucket);
     }
 
@@ -123,11 +127,29 @@ export class RateLimiter {
     return this.buckets.size;
   }
 
+  /**
+   * Keeps the map bounded without scanning it on every request:
+   * - expired buckets are swept at most once per window (O(n), amortized O(1) per request);
+   * - if the map is still over the limit (e.g. an IP spray of fresh keys), the oldest-inserted
+   *   buckets are dropped one by one, each in O(1).
+   */
   private evictOldest(now: number): void {
-    for (const [key, bucket] of this.buckets) {
-      if (now - bucket.windowStart >= this.categories.default.windowMs) {
-        this.buckets.delete(key);
+    const windowMs = this.categories.default.windowMs;
+    if (now - this.lastSweepAt >= windowMs) {
+      this.lastSweepAt = now;
+      for (const [key, bucket] of this.buckets) {
+        if (now - bucket.windowStart >= windowMs) {
+          this.buckets.delete(key);
+        }
       }
+    }
+
+    while (this.buckets.size > this.maxEntries) {
+      const oldest = this.buckets.keys().next();
+      if (oldest.done) {
+        break;
+      }
+      this.buckets.delete(oldest.value);
     }
   }
 }
