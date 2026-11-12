@@ -1581,7 +1581,7 @@ describe("proxy routes", () => {
     await secondApp.close();
   });
 
-  it("allows ai-engine targets outside the generic allowlist in the gateway", async () => {
+  it("rejects ai-engine targets outside ALLOWED_ROUTING_TARGET_HOSTS", async () => {
     const app = Fastify();
 
     vi.stubGlobal("fetch", vi.fn());
@@ -1609,13 +1609,11 @@ describe("proxy routes", () => {
       },
     });
 
-    expect(response.statusCode).toBe(200);
-    expect(response.json()).toMatchObject({
-      source: "override",
-      host: "example.com",
-      apiBaseUrl: "http://example.com:17001",
-      statsBaseUrl: "http://example.com:17000",
-    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ message: "host is not in ALLOWED_ROUTING_TARGET_HOSTS" });
+
+    const target = await app.inject({ method: "GET", url: "/internal/admin/ai-engine/target" });
+    expect(target.json()).toMatchObject({ source: "env", host: "ai-engine-api" });
 
     await app.close();
   });

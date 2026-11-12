@@ -141,6 +141,16 @@ This repository should stay concrete about:
 - `GATEWAY_ROUTING_STATE_FILE`
 - `ALLOWED_ROUTING_TARGET_HOSTS`
 - `API_GATEWAY_ADMIN_TOKEN`
+- `INTERNAL_SERVICE_TOKEN`
+- `TRUST_PROXY`
+
+### Security defaults (fail closed)
+
+- Outside `NODE_ENV=development|test`, the gateway refuses to start when `EDGE_API_TOKEN`, `API_GATEWAY_ADMIN_TOKEN` or `INTERNAL_SERVICE_TOKEN` is empty. In development/test an empty token leaves the matching routes open and a warning is logged at startup.
+- Tokens are compared in constant time.
+- `/internal/ai-engine/*` routes require the `x-internal-token` header to equal `INTERNAL_SERVICE_TOKEN`. Service callers (producers, operators) must send it. These routes must not be exposed by the public ingress.
+- `PUT /internal/admin/ai-engine/target` only accepts hosts listed in `ALLOWED_ROUTING_TARGET_HOSTS` (comma-separated hostnames, IPv4 addresses and IPv4 CIDRs; hostnames are matched literally, without DNS resolution) and only `http`/`https`. An empty allowlist denies every override outside development/test.
+- `TRUST_PROXY` controls which `X-Forwarded-For` hops are trusted when deriving the client IP used by the rate limiter. The default (`false`) ignores the header, so behind an ingress every client shares the ingress IP bucket: set it to the ingress CIDR(s), or `true`/a hop count when the gateway is reachable only through the proxy.
 
 ## References
 

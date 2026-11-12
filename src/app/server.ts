@@ -11,6 +11,7 @@ import { monitoringRoutes } from "./routes/monitoring.js";
 import { proxyRoutes } from "./routes/proxy.js";
 import { ServiceMetrics } from "./services/serviceMetrics.js";
 import { RateLimiter, classifyRoute } from "./services/rateLimiter.js";
+import { buildTrustProxy, insecureModeWarnings } from "./services/security.js";
 
 configureHttpAgent();
 
@@ -18,7 +19,10 @@ configureHttpAgent();
 
 export async function buildServer() {
   const config = loadConfig();
-  const app = Fastify({ logger: true });
+  const app = Fastify({ logger: true, trustProxy: buildTrustProxy(config.TRUST_PROXY) });
+  for (const warning of insecureModeWarnings(config)) {
+    app.log.warn(warning);
+  }
   const metrics = new ServiceMetrics(config);
   const rateLimiter = new RateLimiter(config);
 
