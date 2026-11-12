@@ -12,6 +12,7 @@ import { z } from "zod";
 import type { AppConfig } from "../config.js";
 import { RoutingStateStore } from "../services/routingStateStore.js";
 import { bearerMatches, headerMatches, isPermissiveEnv, isTargetHostAllowed } from "../services/security.js";
+import { ROUTE_TABLE, type Auth, type QueryPolicy, type TimeoutKind, type Upstream } from "./routeTable.js";
 
 /** @module proxy — Reverse-proxy routes forwarding requests to BFF-Mobile and BFF-Backoffice with circuit breakers. */
 
@@ -210,6 +211,23 @@ function sendValidationError(reply: FastifyReply, error: { flatten: () => unknow
  */
 type ForwardMode = "raw" | "json";
 
+/** Fills `:name` segments of a route template from the (already decoded) request params, re-encoding each value. */
+function fillPathParams(template: string, params: unknown): string {
+  const values = (params ?? {}) as Record<string, string>;
+  return template.replace(/:(\w+)/g, (_match, name: string) => encodeURIComponent(values[name] ?? ""));
+}
+
+function applyQueryPolicy(policy: QueryPolicy, query: Record<string, unknown>): Record<string, unknown> {
+  switch (policy) {
+    case "forward":
+      return query;
+    case "forward-without-language":
+      return omitLanguageQuery(query);
+    case "drop":
+      return {};
+  }
+}
+
 const BODYLESS_STATUSES = new Set([204, 205, 304]);
 
 async function forwardRequest(
@@ -278,8 +296,6 @@ function registerRawJsonBodyParser(app: FastifyInstance): void {
 export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Promise<void> {
   const upstreamTimeoutMs = config.UPSTREAM_TIMEOUT_MS ?? 15000;
   const upstreamGenerationTimeoutMs = config.UPSTREAM_GENERATION_TIMEOUT_MS ?? 60000;
-  const mobileBreaker = getBreakerForUrl(config.BFF_MOBILE_URL);
-  const backofficeBreaker = getBreakerForUrl(config.BFF_BACKOFFICE_URL);
   const routingStore = new RoutingStateStore(config);
   await routingStore.load();
   registerRawJsonBodyParser(app);
@@ -319,635 +335,66 @@ export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Prom
     return reply.send(getAiEngineTarget(config, routingStore));
   });
 
-  app.post("/internal/ai-engine/generate/quiz", async (request, reply) => {
-    if (!checkInternalAuth(request, reply, config)) {
-      return;
-    }
-
-    const url = buildUrl(
-      getAiEngineApiBaseUrl(config, routingStore),
-      "/generate/quiz",
-      omitLanguageQuery((request.query as Record<string, unknown>) ?? {}),
-    );
-    await forwardRequest(request, reply, url, "POST", upstreamGenerationTimeoutMs, getBreakerForUrl(getAiEngineApiBaseUrl(config, routingStore)));
-  });
-
-  app.post("/internal/ai-engine/generate/word-pass", async (request, reply) => {
-    if (!checkInternalAuth(request, reply, config)) {
-      return;
-    }
-
-    const url = buildUrl(
-      getAiEngineApiBaseUrl(config, routingStore),
-      "/generate/word-pass",
-      omitLanguageQuery((request.query as Record<string, unknown>) ?? {}),
-    );
-    await forwardRequest(request, reply, url, "POST", upstreamGenerationTimeoutMs, getBreakerForUrl(getAiEngineApiBaseUrl(config, routingStore)));
-  });
-
-  app.post("/internal/ai-engine/ingest/quiz", async (request, reply) => {
-    if (!checkInternalAuth(request, reply, config)) {
-      return;
-    }
-
-    const url = buildUrl(getAiEngineApiBaseUrl(config, routingStore), "/ingest/quiz", {});
-    await forwardRequest(request, reply, url, "POST", upstreamGenerationTimeoutMs, getBreakerForUrl(getAiEngineApiBaseUrl(config, routingStore)));
-  });
-
-  app.post("/internal/ai-engine/ingest/word-pass", async (request, reply) => {
-    if (!checkInternalAuth(request, reply, config)) {
-      return;
-    }
-
-    const url = buildUrl(getAiEngineApiBaseUrl(config, routingStore), "/ingest/word-pass", {});
-    await forwardRequest(request, reply, url, "POST", upstreamGenerationTimeoutMs, getBreakerForUrl(getAiEngineApiBaseUrl(config, routingStore)));
-  });
-
-  app.get("/internal/ai-engine/catalogs", async (request, reply) => {
-    if (!checkInternalAuth(request, reply, config)) {
-      return;
-    }
-
-    const url = buildUrl(getAiEngineApiBaseUrl(config, routingStore), "/catalogs", {});
-    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, getBreakerForUrl(getAiEngineApiBaseUrl(config, routingStore)));
-  });
-
-  app.get("/internal/ai-engine/health", async (request, reply) => {
-    if (!checkInternalAuth(request, reply, config)) {
-      return;
-    }
-
-    const url = buildUrl(getAiEngineApiBaseUrl(config, routingStore), "/health", {});
-    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, getBreakerForUrl(getAiEngineApiBaseUrl(config, routingStore)));
-  });
-
-  app.get("/internal/ai-engine/stats", async (request, reply) => {
-    if (!checkInternalAuth(request, reply, config)) {
-      return;
-    }
-
-    const url = buildUrl(getAiEngineStatsBaseUrl(config, routingStore), "/stats", request.query as Record<string, unknown>);
-    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, getBreakerForUrl(getAiEngineStatsBaseUrl(config, routingStore)));
-  });
-
-  app.post("/v1/backoffice/auth/session", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config)) {
-      return;
-    }
-
-    const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/auth/session", {});
-    await forwardRequest(request, reply, url, "POST", upstreamTimeoutMs, backofficeBreaker);
-  });
-
-  app.get("/v1/backoffice/auth/me", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config)) {
-      return;
-    }
-
-    const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/auth/me", {});
-    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, backofficeBreaker);
-  });
-
-  app.get("/v1/mobile/games/categories", async (request, reply) => {
-    const url = buildUrl(config.BFF_MOBILE_URL, "/v1/mobile/games/categories", {});
-    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, mobileBreaker);
-  });
-
-  app.get("/v1/mobile/player/profile", async (request, reply) => {
-    const url = buildUrl(config.BFF_MOBILE_URL, "/v1/mobile/player/profile", {});
-    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, mobileBreaker);
-  });
-
-  app.put("/v1/mobile/player/profile", async (request, reply) => {
-    const url = buildUrl(config.BFF_MOBILE_URL, "/v1/mobile/player/profile", {});
-    await forwardRequest(request, reply, url, "PUT", upstreamTimeoutMs, mobileBreaker);
-  });
-
-  app.post("/v1/mobile/games/events", async (request, reply) => {
-    const url = buildUrl(config.BFF_MOBILE_URL, "/v1/mobile/games/events", {});
-    await forwardRequest(request, reply, url, "POST", upstreamTimeoutMs, mobileBreaker);
-  });
-
-  app.get("/v1/mobile/games/quiz/random", async (request, reply) => {
-    const parsedQuery = MobileRandomQuerySchema.safeParse(request.query ?? {});
-    if (!parsedQuery.success) {
-      return sendValidationError(reply, parsedQuery.error);
-    }
-
-    const url = buildUrl(config.BFF_MOBILE_URL, "/v1/mobile/games/quiz/random", omitLanguageQuery(parsedQuery.data));
-    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, mobileBreaker, "json");
-  });
-
-  app.get("/v1/mobile/games/wordpass/random", async (request, reply) => {
-    const parsedQuery = MobileRandomQuerySchema.safeParse(request.query ?? {});
-    if (!parsedQuery.success) {
-      return sendValidationError(reply, parsedQuery.error);
-    }
-
-    const url = buildUrl(config.BFF_MOBILE_URL, "/v1/mobile/games/wordpass/random", omitLanguageQuery(parsedQuery.data));
-    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, mobileBreaker, "json");
-  });
-
-  app.post("/v1/mobile/games/quiz/generate", async (request, reply) => {
-    const url = buildUrl(config.BFF_MOBILE_URL, "/v1/mobile/games/quiz/generate", {});
-    await forwardRequest(request, reply, url, "POST", upstreamGenerationTimeoutMs, mobileBreaker);
-  });
-
-  app.post("/v1/mobile/games/wordpass/generate", async (request, reply) => {
-    const url = buildUrl(config.BFF_MOBILE_URL, "/v1/mobile/games/wordpass/generate", {});
-    await forwardRequest(request, reply, url, "POST", upstreamGenerationTimeoutMs, mobileBreaker);
-  });
-
-  app.get("/v1/backoffice/users/leaderboard", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config)) {
-      return;
-    }
-
-    const parsedQuery = LeaderboardQuerySchema.safeParse(request.query ?? {});
-    if (!parsedQuery.success) {
-      return sendValidationError(reply, parsedQuery.error);
-    }
-
-    const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/users/leaderboard", parsedQuery.data);
-    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, backofficeBreaker, "json");
-  });
-
-  app.get("/v1/backoffice/monitor/stats", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config)) {
-      return;
-    }
-
-    const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/monitor/stats", request.query as Record<string, unknown>);
-    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, backofficeBreaker);
-  });
-
-  app.post("/v1/backoffice/users/events/manual", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config)) {
-      return;
-    }
-
-    const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/users/events/manual", {});
-    await forwardRequest(request, reply, url, "POST", upstreamTimeoutMs, backofficeBreaker);
-  });
-
-  app.get("/v1/backoffice/admin/users/roles", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config)) {
-      return;
-    }
-
-    const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/admin/users/roles", {});
-    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, backofficeBreaker);
-  });
-
-  app.patch("/v1/backoffice/admin/users/roles/:firebaseUid", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config)) {
-      return;
-    }
-
-    const params = request.params as { firebaseUid: string };
-    const url = buildUrl(
-      config.BFF_BACKOFFICE_URL,
-      `/v1/backoffice/admin/users/roles/${encodeURIComponent(params.firebaseUid)}`,
-      {},
-    );
-    await forwardRequest(request, reply, url, "PATCH", upstreamTimeoutMs, backofficeBreaker);
-  });
-
-  app.get("/v1/backoffice/services", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config)) {
-      return;
-    }
-
-    const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/services", {});
-    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, backofficeBreaker);
-  });
-
-  app.get("/v1/backoffice/services/operational-summary", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config)) {
-      return;
-    }
-
-    const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/services/operational-summary", {});
-    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, backofficeBreaker);
-  });
-
-  app.get("/v1/backoffice/kubernetes/overview", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config)) {
-      return;
-    }
-
-    const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/kubernetes/overview", {});
-    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, backofficeBreaker);
-  });
-
-  app.get("/v1/backoffice/ai-engine/target", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config)) {
-      return;
-    }
-
-    const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/ai-engine/target", {});
-    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, backofficeBreaker);
-  });
-
-  app.get("/v1/backoffice/ai-engine/plugin/capabilities", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config)) {
-      return;
-    }
-
-    const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/ai-engine/plugin/capabilities", {});
-    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, backofficeBreaker);
-  });
-
-  app.put("/v1/backoffice/ai-engine/target", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config)) {
-      return;
-    }
-
-    const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/ai-engine/target", {});
-    await forwardRequest(request, reply, url, "PUT", upstreamTimeoutMs, backofficeBreaker);
-  });
-
-  app.delete("/v1/backoffice/ai-engine/target", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config)) {
-      return;
-    }
-
-    const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/ai-engine/target", {});
-    await forwardRequest(request, reply, url, "DELETE", upstreamTimeoutMs, backofficeBreaker);
-  });
-
-  app.get("/v1/backoffice/ai-engine/presets", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config)) {
-      return;
-    }
-
-    const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/ai-engine/presets", {});
-    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, backofficeBreaker);
-  });
-
-  app.post("/v1/backoffice/ai-engine/presets", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config)) {
-      return;
-    }
-
-    const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/ai-engine/presets", {});
-    await forwardRequest(request, reply, url, "POST", upstreamTimeoutMs, backofficeBreaker);
-  });
-
-  app.put("/v1/backoffice/ai-engine/presets/:presetId", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config)) {
-      return;
-    }
-
-    const params = request.params as { presetId: string };
-    const url = buildUrl(
-      config.BFF_BACKOFFICE_URL,
-      `/v1/backoffice/ai-engine/presets/${encodeURIComponent(params.presetId)}`,
-      {},
-    );
-    await forwardRequest(request, reply, url, "PUT", upstreamTimeoutMs, backofficeBreaker);
-  });
-
-  app.delete("/v1/backoffice/ai-engine/presets/:presetId", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config)) {
-      return;
-    }
-
-    const params = request.params as { presetId: string };
-    const url = buildUrl(
-      config.BFF_BACKOFFICE_URL,
-      `/v1/backoffice/ai-engine/presets/${encodeURIComponent(params.presetId)}`,
-      {},
-    );
-    await forwardRequest(request, reply, url, "DELETE", upstreamTimeoutMs, backofficeBreaker);
-  });
-
-  app.post("/v1/backoffice/ai-engine/probe", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config)) {
-      return;
-    }
-
-    const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/ai-engine/probe", {});
-    await forwardRequest(request, reply, url, "POST", upstreamTimeoutMs, backofficeBreaker);
-  });
-
-  app.get("/v1/backoffice/ai-engine/connections", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config)) {
-      return;
-    }
-
-    const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/ai-engine/connections", {});
-    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, backofficeBreaker);
-  });
-
-  app.post("/v1/backoffice/ai-engine/connections", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config)) {
-      return;
-    }
-
-    const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/ai-engine/connections", {});
-    await forwardRequest(request, reply, url, "POST", upstreamTimeoutMs, backofficeBreaker);
-  });
-
-  app.put("/v1/backoffice/ai-engine/connections/:presetId", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config)) {
-      return;
-    }
-
-    const params = request.params as { presetId: string };
-    const url = buildUrl(
-      config.BFF_BACKOFFICE_URL,
-      `/v1/backoffice/ai-engine/connections/${encodeURIComponent(params.presetId)}`,
-      {},
-    );
-    await forwardRequest(request, reply, url, "PUT", upstreamTimeoutMs, backofficeBreaker);
-  });
-
-  app.delete("/v1/backoffice/ai-engine/connections/:presetId", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config)) {
-      return;
-    }
-
-    const params = request.params as { presetId: string };
-    const url = buildUrl(
-      config.BFF_BACKOFFICE_URL,
-      `/v1/backoffice/ai-engine/connections/${encodeURIComponent(params.presetId)}`,
-      {},
-    );
-    await forwardRequest(request, reply, url, "DELETE", upstreamTimeoutMs, backofficeBreaker);
-  });
-
-  app.post("/v1/backoffice/ai-engine/connections/:presetId/activate", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config)) {
-      return;
-    }
-
-    const params = request.params as { presetId: string };
-    const url = buildUrl(
-      config.BFF_BACKOFFICE_URL,
-      `/v1/backoffice/ai-engine/connections/${encodeURIComponent(params.presetId)}/activate`,
-      {},
-    );
-    await forwardRequest(request, reply, url, "POST", upstreamTimeoutMs, backofficeBreaker);
-  });
-
-  app.get("/v1/backoffice/ai-diagnostics/rag/stats", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config)) {
-      return;
-    }
-
-    const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/ai-diagnostics/rag/stats", {});
-    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, backofficeBreaker);
-  });
-
-  app.post("/v1/backoffice/ai-diagnostics/tests/run", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config)) {
-      return;
-    }
-
-    const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/ai-diagnostics/tests/run", {});
-    await forwardRequest(request, reply, url, "POST", upstreamTimeoutMs, backofficeBreaker);
-  });
-
-  app.get("/v1/backoffice/ai-diagnostics/tests/status", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config)) {
-      return;
-    }
-
-    const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/ai-diagnostics/tests/status", {});
-    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, backofficeBreaker);
-  });
-
-  app.get("/v1/backoffice/service-targets", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config)) {
-      return;
-    }
-
-    const url = buildUrl(config.BFF_BACKOFFICE_URL, "/v1/backoffice/service-targets", {});
-    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, backofficeBreaker);
-  });
-
-  app.put("/v1/backoffice/service-targets/:service", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config)) {
-      return;
-    }
-
-    const params = request.params as { service: string };
-    const url = buildUrl(
-      config.BFF_BACKOFFICE_URL,
-      `/v1/backoffice/service-targets/${encodeURIComponent(params.service)}`,
-      {},
-    );
-    await forwardRequest(request, reply, url, "PUT", upstreamTimeoutMs, backofficeBreaker);
-  });
-
-  app.delete("/v1/backoffice/service-targets/:service", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config)) {
-      return;
-    }
-
-    const params = request.params as { service: string };
-    const url = buildUrl(
-      config.BFF_BACKOFFICE_URL,
-      `/v1/backoffice/service-targets/${encodeURIComponent(params.service)}`,
-      {},
-    );
-    await forwardRequest(request, reply, url, "DELETE", upstreamTimeoutMs, backofficeBreaker);
-  });
-
-  app.get("/v1/backoffice/services/:service/metrics", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config)) {
-      return;
-    }
-
-    const params = request.params as { service: string };
-    const url = buildUrl(
-      config.BFF_BACKOFFICE_URL,
-      `/v1/backoffice/services/${encodeURIComponent(params.service)}/metrics`,
-      request.query as Record<string, unknown>,
-    );
-    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, backofficeBreaker);
-  });
-
-  app.get("/v1/backoffice/services/:service/logs", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config)) {
-      return;
-    }
-
-    const params = request.params as { service: string };
-    const url = buildUrl(
-      config.BFF_BACKOFFICE_URL,
-      `/v1/backoffice/services/${encodeURIComponent(params.service)}/logs`,
-      request.query as Record<string, unknown>,
-    );
-    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, backofficeBreaker);
-  });
-
-  app.get("/v1/backoffice/services/:service/data", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config)) {
-      return;
-    }
-
-    const params = request.params as { service: string };
-    const url = buildUrl(
-      config.BFF_BACKOFFICE_URL,
-      `/v1/backoffice/services/${encodeURIComponent(params.service)}/data`,
-      request.query as Record<string, unknown>,
-    );
-    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, backofficeBreaker);
-  });
-
-  app.get("/v1/backoffice/services/:service/catalogs", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config)) {
-      return;
-    }
-
-    const params = request.params as { service: string };
-    const url = buildUrl(
-      config.BFF_BACKOFFICE_URL,
-      `/v1/backoffice/services/${encodeURIComponent(params.service)}/catalogs`,
-      {},
-    );
-    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, backofficeBreaker);
-  });
-
-  app.post("/v1/backoffice/services/:service/data", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config)) {
-      return;
-    }
-
-    const params = request.params as { service: string };
-    const url = buildUrl(
-      config.BFF_BACKOFFICE_URL,
-      `/v1/backoffice/services/${encodeURIComponent(params.service)}/data`,
-      {},
-    );
-    await forwardRequest(request, reply, url, "POST", upstreamTimeoutMs, backofficeBreaker);
-  });
-
-  app.patch("/v1/backoffice/services/:service/data/:entryId", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config)) {
-      return;
-    }
-
-    const params = request.params as { service: string; entryId: string };
-    const url = buildUrl(
-      config.BFF_BACKOFFICE_URL,
-      `/v1/backoffice/services/${encodeURIComponent(params.service)}/data/${encodeURIComponent(params.entryId)}`,
-      {},
-    );
-    await forwardRequest(request, reply, url, "PATCH", upstreamTimeoutMs, backofficeBreaker);
-  });
-
-  app.post("/v1/backoffice/services/:service/generation/process", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config)) {
-      return;
-    }
-
-    const params = request.params as { service: string };
-    const url = buildUrl(
-      config.BFF_BACKOFFICE_URL,
-      `/v1/backoffice/services/${encodeURIComponent(params.service)}/generation/process`,
-      {},
-    );
-    await forwardRequest(request, reply, url, "POST", upstreamTimeoutMs, backofficeBreaker);
-  });
-
-  app.post("/v1/backoffice/services/:service/generation/wait", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config)) {
-      return;
-    }
-
-    const params = request.params as { service: string };
-    const url = buildUrl(
-      config.BFF_BACKOFFICE_URL,
-      `/v1/backoffice/services/${encodeURIComponent(params.service)}/generation/wait`,
-      {},
-    );
-    await forwardRequest(request, reply, url, "POST", upstreamTimeoutMs, backofficeBreaker);
-  });
-
-  app.get("/v1/backoffice/services/:service/generation/processes", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config)) {
-      return;
-    }
-
-    const params = request.params as { service: string };
-    const url = buildUrl(
-      config.BFF_BACKOFFICE_URL,
-      `/v1/backoffice/services/${encodeURIComponent(params.service)}/generation/processes`,
-      request.query as Record<string, unknown>,
-    );
-    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, backofficeBreaker);
-  });
-
-  app.get("/v1/backoffice/services/:service/generation/process/:taskId", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config)) {
-      return;
-    }
-
-    const params = request.params as { service: string; taskId: string };
-    const url = buildUrl(
-      config.BFF_BACKOFFICE_URL,
-      `/v1/backoffice/services/${encodeURIComponent(params.service)}/generation/process/${encodeURIComponent(params.taskId)}`,
-      request.query as Record<string, unknown>,
-    );
-    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, backofficeBreaker);
-  });
-
-  app.get("/v1/backoffice/services/:service/generation/worker", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config)) {
-      return;
-    }
-
-    const params = request.params as { service: string };
-    const url = buildUrl(
-      config.BFF_BACKOFFICE_URL,
-      `/v1/backoffice/services/${encodeURIComponent(params.service)}/generation/worker`,
-      {},
-    );
-    await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, backofficeBreaker);
-  });
-
-  app.post("/v1/backoffice/services/:service/generation/worker/start", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config)) {
-      return;
-    }
-
-    const params = request.params as { service: string };
-    const url = buildUrl(
-      config.BFF_BACKOFFICE_URL,
-      `/v1/backoffice/services/${encodeURIComponent(params.service)}/generation/worker/start`,
-      {},
-    );
-    await forwardRequest(request, reply, url, "POST", upstreamTimeoutMs, backofficeBreaker);
-  });
-
-  app.post("/v1/backoffice/services/:service/generation/worker/stop", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config)) {
-      return;
-    }
-
-    const params = request.params as { service: string };
-    const url = buildUrl(
-      config.BFF_BACKOFFICE_URL,
-      `/v1/backoffice/services/${encodeURIComponent(params.service)}/generation/worker/stop`,
-      {},
-    );
-    await forwardRequest(request, reply, url, "POST", upstreamTimeoutMs, backofficeBreaker);
-  });
-
-  app.delete("/v1/backoffice/services/:service/data/:entryId", async (request, reply) => {
-    if (!checkEdgeAuth(request, reply, config)) {
-      return;
-    }
-
-    const params = request.params as { service: string; entryId: string };
-    const url = buildUrl(
-      config.BFF_BACKOFFICE_URL,
-      `/v1/backoffice/services/${encodeURIComponent(params.service)}/data/${encodeURIComponent(params.entryId)}`,
-      request.query as Record<string, unknown>,
-    );
-    await forwardRequest(request, reply, url, "DELETE", upstreamTimeoutMs, backofficeBreaker);
-  });
+  const baseUrl: Record<Upstream, () => string> = {
+    "bff-mobile": () => config.BFF_MOBILE_URL,
+    "bff-backoffice": () => config.BFF_BACKOFFICE_URL,
+    "ai-engine-api": () => getAiEngineApiBaseUrl(config, routingStore),
+    "ai-engine-stats": () => getAiEngineStatsBaseUrl(config, routingStore),
+  };
+  const timeoutMs: Record<TimeoutKind, number> = {
+    default: upstreamTimeoutMs,
+    generation: upstreamGenerationTimeoutMs,
+  };
+  // New auth kinds are added here and in the `Auth` type. Both guards fail closed outside development/test.
+  const authGuard: Record<Auth, (request: FastifyRequest, reply: FastifyReply) => boolean> = {
+    none: () => true,
+    edge: (request, reply) => checkEdgeAuth(request, reply, config),
+    internal: (request, reply) => checkInternalAuth(request, reply, config),
+  };
+
+  // Plain forwards: one generic handler driven by ROUTE_TABLE.
+  for (const route of ROUTE_TABLE) {
+    app.route({
+      method: route.method,
+      url: route.path,
+      handler: async (request, reply) => {
+        if (!authGuard[route.auth](request, reply)) {
+          return;
+        }
+
+        const base = baseUrl[route.upstream]();
+        const query = applyQueryPolicy(route.query, (request.query as Record<string, unknown>) ?? {});
+        const url = buildUrl(base, fillPathParams(route.upstreamPath, request.params), query);
+        await forwardRequest(request, reply, url, route.method, timeoutMs[route.timeout], getBreakerForUrl(base));
+      },
+    });
+  }
+
+  // Routes that validate their query stay explicit: the validated (and re-serialized) query is forwarded in "json" mode.
+  function registerValidatedGet(
+    path: string,
+    schema: z.ZodType<Record<string, unknown>>,
+    upstream: Upstream,
+    auth: Auth,
+    query: (data: Record<string, unknown>) => Record<string, unknown>,
+  ): void {
+    app.get(path, async (request, reply) => {
+      if (!authGuard[auth](request, reply)) {
+        return;
+      }
+
+      const parsedQuery = schema.safeParse(request.query ?? {});
+      if (!parsedQuery.success) {
+        return sendValidationError(reply, parsedQuery.error);
+      }
+
+      const base = baseUrl[upstream]();
+      const url = buildUrl(base, path, query(parsedQuery.data));
+      await forwardRequest(request, reply, url, "GET", upstreamTimeoutMs, getBreakerForUrl(base), "json");
+    });
+  }
+
+  registerValidatedGet("/v1/mobile/games/quiz/random", MobileRandomQuerySchema, "bff-mobile", "none", omitLanguageQuery);
+  registerValidatedGet("/v1/mobile/games/wordpass/random", MobileRandomQuerySchema, "bff-mobile", "none", omitLanguageQuery);
+  registerValidatedGet("/v1/backoffice/users/leaderboard", LeaderboardQuerySchema, "bff-backoffice", "edge", (data) => data);
 }
