@@ -1,7 +1,9 @@
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
+    // tsc emits compiled tests into dist/; only the TypeScript sources are the test suite.
+    exclude: [...configDefaults.exclude, "dist/**"],
     coverage: {
       provider: "v8",
       reporter: ["text", "json-summary", "html", "lcov"],
