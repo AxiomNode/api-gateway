@@ -15,7 +15,7 @@ Edge gateway that exposes a single public entry point and routes traffic to BFF 
 
 ## CI/CD notes
 - Push to main dispatches platform-infra build-push with service=api-gateway.
-- Deployment rollout is handled in platform-infra (dev auto-deploy).
+- Deployment is manual-only via the platform-infra `deploy.yaml` workflow (the k3s staging host no longer exists, nothing auto-deploys).
 
 ## LLM editing rules
 - Do not break public route contracts without docs update.

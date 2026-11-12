@@ -106,13 +106,13 @@ Primary downstream dependencies:
 
 ### Operational constraints
 
-- `api-gateway` is part of the automatic GHCR-to-k3s staging rollout chain.
+- `api-gateway` images are published to GHCR by the `platform-infra` build workflow; the former automatic GHCR-to-k3s staging rollout is disabled (the k3s host no longer exists and `deploy.yaml` is manual-only).
 - The gateway image can be redeployed independently from the actual ai-engine runtime location.
 - When `ai-engine` is externalized, a healthy gateway rollout does not by itself guarantee healthy ai-engine connectivity; the active runtime target must also be valid.
 
 ### CI/CD and rollout note
 
-CI and rollout behavior are documented in `docs/operations/README.md` and `../docs/operations/cicd-workflow-map.md`.
+CI behavior is documented in `docs/operations/README.md` and `../docs/operations/cicd-workflow-map.md`.
 
 ### Failure boundaries
 
