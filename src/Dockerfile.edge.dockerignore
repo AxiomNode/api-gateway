@@ -1,0 +1,14 @@
+# Patterns are relative to the build context root (the workspace folder that
+# holds contracts-and-schemas, shared-sdk-client and the service checkout), not
+# to src/. BuildKit reads this file because it is named after Dockerfile.edge.
+**/.git
+**/.github
+**/node_modules
+**/dist
+**/coverage
+**/.env
+**/.env.*
+!**/.env.example
+**/npm-debug.log*
+**/tests
+**/docs
