@@ -40,13 +40,13 @@ flowchart LR
 
 1. client edge routing toward `bff-mobile`
 2. client edge routing toward `bff-backoffice`
-3. internal ai-engine proxying toward the active AI API and stats target
+3. internal ai-engine proxying toward the configured AI API and stats URLs
 
-That third role matters operationally because the gateway can expose stable internal AI routes while the actual AI upstream host changes over time.
+That third role matters operationally because the gateway can expose stable internal AI routes while the AI upstream host is changed through configuration.
 
-Route inventory, forwarding semantics, and runtime target behavior are documented in the local docs and in the public-edge capability dossier so this README can stay focused on repository role.
+Route inventory and forwarding semantics are documented in the local docs and in the public-edge capability dossier so this README can stay focused on repository role.
 
-Plain forwarding routes use the shared SDK raw passthrough (`forwardHttpRaw`): request and response bodies travel as the original bytes, with no JSON parse/serialize at the gateway, and the upstream timeout covers reading the body. Routes that validate input (mobile quiz/word-pass random, backoffice leaderboard) keep the JSON mode, and `PUT /internal/admin/ai-engine/target` parses its own body.
+Plain forwarding routes use the shared SDK raw passthrough (`forwardHttpRaw`): request and response bodies travel as the original bytes, with no JSON parse/serialize at the gateway, and the upstream timeout covers reading the body. Routes that validate input (mobile quiz/word-pass random, backoffice leaderboard) keep the JSON mode.
 
 Backoffice role routes are forwarded without owning role policy. `GET /v1/backoffice/admin/users/roles` can be used by `SuperAdmin` and `Inspector` after downstream validation, while role mutation remains a `SuperAdmin` operation in `microservice-users`.
 
@@ -62,8 +62,8 @@ Backoffice role routes are forwarded without owning role policy. `GET /v1/backof
 
 - route public mobile requests toward `bff-mobile`
 - route protected backoffice requests toward `bff-backoffice`
-- proxy internal ai-engine traffic toward the active runtime target
-- expose health checks and hold the persisted ai-engine routing state
+- proxy internal ai-engine traffic toward the configured ai-engine API and stats URLs
+- expose health checks
 
 ### Local development
 
@@ -74,17 +74,11 @@ Backoffice role routes are forwarded without owning role policy. `GET /v1/backof
 
 ### Route note
 
-The gateway owns public `/v1/mobile/*`, `/v1/backoffice/*`, internal `/internal/ai-engine/*`, and privileged runtime-target routes. See `docs/architecture/README.md` and the edge capability dossier for the concrete inventory.
+The gateway owns public `/v1/mobile/*`, `/v1/backoffice/*`, and internal `/internal/ai-engine/*`. See `docs/architecture/README.md` and the edge capability dossier for the concrete inventory.
 
-### Runtime routing persistence
+### Upstream resolution
 
-- The live ai-engine target is persisted in `GATEWAY_ROUTING_STATE_FILE`.
-- This state survives pod recreation and process restart.
-- The gateway therefore owns effective ai-engine connectivity, not only the static environment default.
-
-### Effective target resolution
-
-Effective ai-engine traffic resolves from persisted runtime override first and environment-derived default second, which is why this repository owns a live routing decision beyond static manifests.
+The BFF and ai-engine upstreams are resolved from environment configuration only (`BFF_MOBILE_URL`, `BFF_BACKOFFICE_URL`, `AI_ENGINE_API_URL`, `AI_ENGINE_STATS_URL`); the gateway keeps no runtime override or persisted routing state.
 
 ## Documentation
 
@@ -110,7 +104,7 @@ Primary downstream dependencies:
 
 - `api-gateway` images are published to GHCR by the `platform-infra` build workflow; the former automatic GHCR-to-k3s staging rollout is disabled (the k3s host no longer exists and `deploy.yaml` is manual-only).
 - The gateway image can be redeployed independently from the actual ai-engine runtime location.
-- When `ai-engine` is externalized, a healthy gateway rollout does not by itself guarantee healthy ai-engine connectivity; the active runtime target must also be valid.
+- When `ai-engine` is externalized, a healthy gateway rollout does not by itself guarantee healthy ai-engine connectivity; `AI_ENGINE_API_URL` and `AI_ENGINE_STATS_URL` must also point at the real runtime.
 
 ### CI/CD and rollout note
 
@@ -128,8 +122,7 @@ CI behavior is documented in `docs/operations/README.md` and `../docs/operations
 This repository should stay concrete about:
 
 - exposed edge and internal AI routes
-- gateway-owned routing state
-- target resolution behavior
+- upstream resolution from environment configuration
 - repo-local CI and deployment gates
 
 ### Key environment variables
@@ -140,18 +133,14 @@ This repository should stay concrete about:
 - `EDGE_API_TOKEN`
 - `AI_ENGINE_API_URL`
 - `AI_ENGINE_STATS_URL`
-- `GATEWAY_ROUTING_STATE_FILE`
-- `ALLOWED_ROUTING_TARGET_HOSTS`
-- `API_GATEWAY_ADMIN_TOKEN`
 - `INTERNAL_SERVICE_TOKEN`
 - `TRUST_PROXY`
 
 ### Security defaults (fail closed)
 
-- Outside `NODE_ENV=development|test`, the gateway refuses to start when `EDGE_API_TOKEN`, `API_GATEWAY_ADMIN_TOKEN` or `INTERNAL_SERVICE_TOKEN` is empty. In development/test an empty token leaves the matching routes open and a warning is logged at startup.
+- Outside `NODE_ENV=development|test`, the gateway refuses to start when `EDGE_API_TOKEN` or `INTERNAL_SERVICE_TOKEN` is empty. In development/test an empty token leaves the matching routes open and a warning is logged at startup.
 - Tokens are compared in constant time.
 - `/internal/ai-engine/*` routes require the `x-internal-token` header to equal `INTERNAL_SERVICE_TOKEN`. Service callers (producers, operators) must send it. These routes must not be exposed by the public ingress.
-- `PUT /internal/admin/ai-engine/target` only accepts hosts listed in `ALLOWED_ROUTING_TARGET_HOSTS` (comma-separated hostnames, IPv4 addresses and IPv4 CIDRs; hostnames are matched literally, without DNS resolution) and only `http`/`https`. An empty allowlist denies every override outside development/test.
 - `TRUST_PROXY` controls which `X-Forwarded-For` hops are trusted when deriving the client IP used by the rate limiter. The default (`false`) ignores the header, so behind an ingress every client shares the ingress IP bucket: set it to the ingress CIDR(s), or `true`/a hop count when the gateway is reachable only through the proxy.
 
 ## References

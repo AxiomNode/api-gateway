@@ -7,7 +7,6 @@ import {
   headerMatches,
   insecureModeWarnings,
   isPermissiveEnv,
-  isTargetHostAllowed,
   missingTokens,
   parseTrustProxy,
   safeEqual,
@@ -42,12 +41,11 @@ describe("constant-time comparison", () => {
 });
 
 describe("credential validation", () => {
-  const full = { EDGE_API_TOKEN: "a", API_GATEWAY_ADMIN_TOKEN: "b", INTERNAL_SERVICE_TOKEN: "c" };
+  const full = { EDGE_API_TOKEN: "a", INTERNAL_SERVICE_TOKEN: "c" };
 
   it("lists empty, blank and unset tokens", () => {
     expect(missingTokens({ NODE_ENV: "production", EDGE_API_TOKEN: "  " })).toEqual([
       "EDGE_API_TOKEN",
-      "API_GATEWAY_ADMIN_TOKEN",
       "INTERNAL_SERVICE_TOKEN",
     ]);
     expect(missingTokens({ NODE_ENV: "production", ...full })).toEqual([]);
@@ -64,40 +62,9 @@ describe("credential validation", () => {
   it("tolerates missing tokens in development and test but warns", () => {
     expect(() => assertSecureConfig({ NODE_ENV: "development" })).not.toThrow();
     expect(() => assertSecureConfig({ NODE_ENV: "test" })).not.toThrow();
-    expect(insecureModeWarnings({ NODE_ENV: "development" })).toHaveLength(3);
+    expect(insecureModeWarnings({ NODE_ENV: "development" })).toHaveLength(2);
     expect(insecureModeWarnings({ NODE_ENV: "development", ...full })).toEqual([]);
     expect(insecureModeWarnings({ NODE_ENV: "production" })).toEqual([]);
-  });
-});
-
-describe("isTargetHostAllowed", () => {
-  const list = "localhost, Example.com,10.0.0.0/8,192.168.1.0/24,bad/33,notanip/8";
-
-  it("matches hostnames case-insensitively and IPv4 literals inside CIDRs", () => {
-    expect(isTargetHostAllowed("LOCALHOST", list, "production")).toBe(true);
-    expect(isTargetHostAllowed("example.com", list, "production")).toBe(true);
-    expect(isTargetHostAllowed("10.20.30.40", list, "production")).toBe(true);
-    expect(isTargetHostAllowed("192.168.1.77", list, "production")).toBe(true);
-  });
-
-  it("denies everything else, including metadata IPs and hostnames against CIDRs", () => {
-    expect(isTargetHostAllowed("169.254.169.254", list, "production")).toBe(false);
-    expect(isTargetHostAllowed("192.168.2.1", list, "production")).toBe(false);
-    expect(isTargetHostAllowed("evil.example.net", list, "production")).toBe(false);
-    expect(isTargetHostAllowed("internal.svc", "10.0.0.0/8", "production")).toBe(false);
-    expect(isTargetHostAllowed("1.2.3.4", "bad/33", "production")).toBe(false);
-  });
-
-  it("supports a /0 and exact-IP entries", () => {
-    expect(isTargetHostAllowed("8.8.8.8", "0.0.0.0/0", "production")).toBe(true);
-    expect(isTargetHostAllowed("8.8.8.8", "8.8.8.8", "production")).toBe(true);
-  });
-
-  it("allows anything with an empty allowlist only in development/test", () => {
-    expect(isTargetHostAllowed("anything.dev", undefined, "development")).toBe(true);
-    expect(isTargetHostAllowed("anything.dev", " , ", "test")).toBe(true);
-    expect(isTargetHostAllowed("anything.dev", undefined, "production")).toBe(false);
-    expect(isTargetHostAllowed("anything.dev", "", "staging")).toBe(false);
   });
 });
 

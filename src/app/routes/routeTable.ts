@@ -63,7 +63,7 @@ function section(defaults: Section, entries: readonly Entry[]): RouteDef[] {
 
 /**
  * Plain-forward routes. Routes that validate input (`GET /v1/mobile/games/{quiz,wordpass}/random`,
- * `GET /v1/backoffice/users/leaderboard`) and the `/internal/admin/*` routes are explicit handlers in proxy.ts.
+ * `GET /v1/backoffice/users/leaderboard`) are explicit handlers in proxy.ts.
  */
 export const ROUTE_TABLE: readonly RouteDef[] = [
   ...section({ upstream: "bff-mobile", auth: "none" }, [
@@ -84,27 +84,14 @@ export const ROUTE_TABLE: readonly RouteDef[] = [
     ["PATCH", "/admin/users/roles/:firebaseUid"],
     ["GET", "/services"],
     ["GET", "/services/operational-summary"],
-    ["GET", "/kubernetes/overview"],
     ["GET", "/ai-engine/target"],
     ["GET", "/ai-engine/plugin/capabilities"],
     ["PUT", "/ai-engine/target"],
     ["DELETE", "/ai-engine/target"],
-    ["GET", "/ai-engine/presets"],
-    ["POST", "/ai-engine/presets"],
-    ["PUT", "/ai-engine/presets/:presetId"],
-    ["DELETE", "/ai-engine/presets/:presetId"],
     ["POST", "/ai-engine/probe"],
-    ["GET", "/ai-engine/connections"],
-    ["POST", "/ai-engine/connections"],
-    ["PUT", "/ai-engine/connections/:presetId"],
-    ["DELETE", "/ai-engine/connections/:presetId"],
-    ["POST", "/ai-engine/connections/:presetId/activate"],
     ["GET", "/ai-diagnostics/rag/stats"],
     ["POST", "/ai-diagnostics/tests/run"],
     ["GET", "/ai-diagnostics/tests/status"],
-    ["GET", "/service-targets"],
-    ["PUT", "/service-targets/:service"],
-    ["DELETE", "/service-targets/:service"],
     ["GET", "/services/:service/metrics", { query: "forward" }],
     ["GET", "/services/:service/logs", { query: "forward" }],
     ["GET", "/services/:service/data", { query: "forward" }],

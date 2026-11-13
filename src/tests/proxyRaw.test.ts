@@ -1,9 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { mkdtemp, rm } from "node:fs/promises";
 import http from "node:http";
-import os from "node:os";
-import path from "node:path";
 
 import { isUpstreamTimeoutError } from "@axiomnode/shared-sdk-client/proxy";
 import Fastify, { type FastifyInstance } from "fastify";
@@ -12,7 +9,6 @@ import { proxyRoutes } from "../app/routes/proxy.js";
 
 type Seen = { method?: string; url?: string; body: Buffer; contentType?: string; authorization?: string };
 
-let tempStateDir = "";
 let upstream: http.Server | undefined;
 let app: FastifyInstance | undefined;
 const seen: Seen[] = [];
@@ -59,7 +55,6 @@ async function buildApp(baseUrl: string, overrides: Record<string, unknown> = {}
     BFF_MOBILE_URL: baseUrl,
     BFF_BACKOFFICE_URL: baseUrl,
     EDGE_API_TOKEN: "",
-    GATEWAY_ROUTING_STATE_FILE: path.join(tempStateDir, "routing-state.json"),
     ...overrides,
   } as never);
   app = instance;
@@ -67,8 +62,7 @@ async function buildApp(baseUrl: string, overrides: Record<string, unknown> = {}
 }
 
 describe("raw passthrough on plain forwarding routes", () => {
-  beforeEach(async () => {
-    tempStateDir = await mkdtemp(path.join(os.tmpdir(), "axiomnode-gateway-raw-"));
+  beforeEach(() => {
     seen.length = 0;
   });
 
@@ -80,7 +74,6 @@ describe("raw passthrough on plain forwarding routes", () => {
       await new Promise((resolve) => upstream!.close(resolve));
       upstream = undefined;
     }
-    await rm(tempStateDir, { recursive: true, force: true });
   });
 
   it("forwards the request body bytes and content-type untouched (POST)", async () => {
@@ -293,35 +286,5 @@ describe("raw passthrough on plain forwarding routes", () => {
     expect(valid.json()).toEqual({ items: [] });
     expect(seen).toHaveLength(1);
     expect(seen[0].url).toBe("/v1/mobile/games/quiz/random?count=3");
-  });
-
-  it("still parses JSON for the admin target route that reads the body itself", async () => {
-    const baseUrl = await startUpstream((_req, res) => res.end("{}"));
-    const gateway = await buildApp(baseUrl);
-
-    const ok = await gateway.inject({
-      method: "PUT",
-      url: "/internal/admin/ai-engine/target",
-      headers: { "content-type": "application/json" },
-      payload: { host: "engine.example.com", protocol: "https", apiPort: 443, statsPort: 8443 },
-    });
-    const malformed = await gateway.inject({
-      method: "PUT",
-      url: "/internal/admin/ai-engine/target",
-      headers: { "content-type": "application/json" },
-      payload: "{bad",
-    });
-    const invalid = await gateway.inject({
-      method: "PUT",
-      url: "/internal/admin/ai-engine/target",
-      headers: { "content-type": "application/json" },
-      payload: { host: "" },
-    });
-
-    expect(ok.statusCode).toBe(200);
-    expect(ok.json()).toMatchObject({ host: "engine.example.com", apiPort: 443 });
-    expect(malformed.statusCode).toBe(400);
-    expect(invalid.statusCode).toBe(400);
-    expect(invalid.json()).toMatchObject({ message: "Invalid payload" });
   });
 });

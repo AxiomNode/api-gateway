@@ -16,7 +16,7 @@ This section groups repository-local guidance for evolving `api-gateway` safely.
 
 - keep internal AI route paths stable for producer and operator consumers
 - separate AI API versus AI stats targets explicitly
-- document whether a change affects environment defaults, persisted runtime target behavior, or both
+- document whether a change affects environment defaults
 
 ## Intended topics
 
