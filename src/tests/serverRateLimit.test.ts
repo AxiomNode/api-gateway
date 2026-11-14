@@ -1,15 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { mkdtemp, rm } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-
 import { buildServer } from "../app/server.js";
 
-let stateDir = "";
-
-beforeEach(async () => {
-  stateDir = await mkdtemp(path.join(os.tmpdir(), "axiomnode-gateway-rl-"));
+beforeEach(() => {
   vi.stubEnv("SERVICE_NAME", "api-gateway");
   vi.stubEnv("SERVICE_PORT", "7005");
   vi.stubEnv("NODE_ENV", "test");
@@ -19,7 +12,6 @@ beforeEach(async () => {
   vi.stubEnv("AI_ENGINE_API_URL", "http://ai-api:7001");
   vi.stubEnv("AI_ENGINE_STATS_URL", "http://ai-stats:7000");
   vi.stubEnv("EDGE_API_TOKEN", "");
-  vi.stubEnv("GATEWAY_ROUTING_STATE_FILE", path.join(stateDir, "routing-state.json"));
   vi.stubEnv("RATE_LIMIT_ENABLED", "true");
   vi.stubEnv("RATE_LIMIT_DEFAULT_MAX", "2");
   vi.stubEnv("RATE_LIMIT_GENERATION_MAX", "1");
@@ -28,13 +20,9 @@ beforeEach(async () => {
   vi.stubEnv("RATE_LIMIT_WINDOW_MS", "60000");
 });
 
-afterEach(async () => {
+afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
-  if (stateDir) {
-    await rm(stateDir, { recursive: true, force: true });
-    stateDir = "";
-  }
 });
 
 describe("server rate limiting", () => {

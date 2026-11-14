@@ -1,8 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
+import { readFile } from "node:fs/promises";
 
 import Fastify, { type FastifyInstance } from "fastify";
 
@@ -21,7 +19,7 @@ import { proxyRoutes } from "../app/routes/proxy.js";
 type FixtureRoute = {
   method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   path: string;
-  kind: "table" | "explicit-validated" | "explicit-admin";
+  kind: "table" | "explicit-validated";
   auth?: "none" | "edge" | "internal";
   upstream?: "bff-mobile" | "bff-backoffice" | "ai-engine-api" | "ai-engine-stats";
   upstreamPath?: string;
@@ -54,13 +52,11 @@ const BASES = {
 } as const;
 const EDGE_TOKEN = "edge-secret";
 const INTERNAL_TOKEN = "internal-secret";
-const ADMIN_TOKEN = "admin-secret";
 const TIMEOUTS = { default: 11_111, generation: 22_222 } as const;
 // "a%2Fb" exercises path-parameter re-encoding (Fastify decodes it, the gateway must encode it again).
 const PARAM_VALUE = "a%2Fb";
 const ENCODED_PARAM = "a%2Fb";
 
-let tempDir = "";
 let app: FastifyInstance;
 const registered: Array<{ method: string; url: string }> = [];
 
@@ -78,7 +74,6 @@ function config(overrides: Record<string, unknown> = {}) {
     INTERNAL_SERVICE_TOKEN: INTERNAL_TOKEN,
     UPSTREAM_TIMEOUT_MS: TIMEOUTS.default,
     UPSTREAM_GENERATION_TIMEOUT_MS: TIMEOUTS.generation,
-    GATEWAY_ROUTING_STATE_FILE: path.join(tempDir, "routing-state.json"),
     ...overrides,
   } as never;
 }
@@ -98,7 +93,6 @@ async function build(overrides: Record<string, unknown> = {}): Promise<FastifyIn
 }
 
 beforeEach(async () => {
-  tempDir = await mkdtemp(path.join(os.tmpdir(), "axiomnode-gateway-equiv-"));
   forwardRaw.mockReset().mockResolvedValue({ status: 200, contentType: "application/json", body: Buffer.from("{}") });
   forwardJson.mockReset().mockResolvedValue({ status: 200, contentType: "application/json", payload: {} });
   registered.length = 0;
@@ -115,26 +109,24 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await app.close();
-  await rm(tempDir, { recursive: true, force: true });
 });
 
 describe("gateway route equivalence", () => {
-  it("fixture covers the 62 original registrations", () => {
-    expect(fixture).toHaveLength(62);
-    expect(fixture.filter((route) => route.kind === "explicit-admin")).toHaveLength(3);
+  it("fixture covers the 46 registrations that remain after the routing plane removal", () => {
+    expect(fixture).toHaveLength(46);
     expect(fixture.filter((route) => route.kind === "explicit-validated")).toHaveLength(3);
   });
 
   it("pins how many routes carry each auth rule, so no route can silently lose its auth", () => {
     const count = (auth: string) => fixture.filter((route) => route.auth === auth).length;
-    expect(count("edge")).toBe(44);
+    expect(count("edge")).toBe(31);
     expect(count("internal")).toBe(7);
     expect(count("none")).toBe(8);
     const internal = fixture.filter((route) => route.path.startsWith("/internal/ai-engine/"));
     expect(internal).toHaveLength(7);
     expect(internal.every((route) => route.auth === "internal")).toBe(true);
     const backoffice = fixture.filter((route) => route.path.startsWith("/v1/backoffice/"));
-    expect(backoffice).toHaveLength(44);
+    expect(backoffice).toHaveLength(31);
     expect(backoffice.every((route) => route.auth === "edge")).toBe(true);
   });
 
@@ -144,7 +136,7 @@ describe("gateway route equivalence", () => {
     expect(actual).toEqual(expected);
   });
 
-  const forwarded = fixture.filter((route) => route.kind !== "explicit-admin");
+  const forwarded = fixture;
 
   describe.each(forwarded.map((route) => [`${route.method} ${route.path}`, route] as const))("%s", (_name, route) => {
     const url = concretePath(route.path);
@@ -273,60 +265,41 @@ describe("gateway route equivalence", () => {
     });
   });
 
-  it("routes ai-engine traffic to the base URL from the runtime override when one is set", async () => {
-    const put = await app.inject({
-      method: "PUT",
-      url: "/internal/admin/ai-engine/target",
-      payload: { host: "localhost", apiPort: 9101, statsPort: 9100 },
-    });
-    expect(put.statusCode).toBe(200);
-
+  it("routes ai-engine traffic to the configured base URLs only", async () => {
     const headers = { "x-internal-token": INTERNAL_TOKEN };
     await app.inject({ method: "GET", url: "/internal/ai-engine/health", headers });
     await app.inject({ method: "GET", url: "/internal/ai-engine/stats?x=1", headers });
     const targets = forwardRaw.mock.calls.map((call) => (call[0] as { targetUrl: string }).targetUrl);
-    expect(targets).toEqual(["http://localhost:9101/health", "http://localhost:9100/stats?x=1"]);
+    expect(targets).toEqual([`${BASES["ai-engine-api"]}/health`, `${BASES["ai-engine-stats"]}/stats?x=1`]);
   });
 
-  it("keeps the explicit admin routes behind the admin token rules", async () => {
-    const guarded = await build({ API_GATEWAY_ADMIN_TOKEN: ADMIN_TOKEN });
-    for (const method of ["GET", "PUT", "DELETE"] as const) {
-      const denied = await guarded.inject({ method, url: "/internal/admin/ai-engine/target", payload: {} });
-      expect(denied.statusCode).toBe(401);
-    }
-    const allowed = await guarded.inject({
-      method: "GET",
-      url: "/internal/admin/ai-engine/target",
-      headers: { authorization: `Bearer ${ADMIN_TOKEN}` },
+  it.each([
+    ["GET", "/v1/backoffice/kubernetes/overview"],
+    ["GET", "/v1/backoffice/service-targets"],
+    ["PUT", "/v1/backoffice/service-targets/quizz"],
+    ["DELETE", "/v1/backoffice/service-targets/quizz"],
+    ["GET", "/v1/backoffice/routing/history"],
+    ["GET", "/v1/backoffice/ai-engine/presets"],
+    ["POST", "/v1/backoffice/ai-engine/presets"],
+    ["PUT", "/v1/backoffice/ai-engine/presets/p1"],
+    ["DELETE", "/v1/backoffice/ai-engine/presets/p1"],
+    ["GET", "/v1/backoffice/ai-engine/connections"],
+    ["POST", "/v1/backoffice/ai-engine/connections"],
+    ["PUT", "/v1/backoffice/ai-engine/connections/p1"],
+    ["DELETE", "/v1/backoffice/ai-engine/connections/p1"],
+    ["POST", "/v1/backoffice/ai-engine/connections/p1/activate"],
+    ["GET", "/internal/admin/ai-engine/target"],
+    ["PUT", "/internal/admin/ai-engine/target"],
+    ["DELETE", "/internal/admin/ai-engine/target"],
+  ] as const)("no longer exposes the removed routing-plane route %s %s", async (method, url) => {
+    const response = await app.inject({
+      method,
+      url,
+      headers: { authorization: `Bearer ${EDGE_TOKEN}`, "x-internal-token": INTERNAL_TOKEN },
+      payload: method === "GET" || method === "DELETE" ? undefined : {},
     });
-    expect(allowed.statusCode).toBe(200);
-    await guarded.close();
-  });
-
-  it("denies the admin routes outside development/test when no admin token is configured", async () => {
-    const closed = await build({ NODE_ENV: "production", API_GATEWAY_ADMIN_TOKEN: "" });
-    for (const method of ["GET", "PUT", "DELETE"] as const) {
-      const denied = await closed.inject({ method, url: "/internal/admin/ai-engine/target", payload: {} });
-      expect(denied.statusCode).toBe(401);
-    }
-    await closed.close();
-  });
-
-  it("applies the routing allowlist to the admin target route", async () => {
-    const restricted = await build({ ALLOWED_ROUTING_TARGET_HOSTS: "ai.internal" });
-    const refused = await restricted.inject({
-      method: "PUT",
-      url: "/internal/admin/ai-engine/target",
-      payload: { host: "evil.example" },
-    });
-    expect(refused.statusCode).toBe(400);
-    const accepted = await restricted.inject({
-      method: "PUT",
-      url: "/internal/admin/ai-engine/target",
-      payload: { host: "ai.internal" },
-    });
-    expect(accepted.statusCode).toBe(200);
-    await restricted.close();
+    expect(response.statusCode).toBe(404);
+    expect(forwardRaw).not.toHaveBeenCalled();
   });
 
   it.each([

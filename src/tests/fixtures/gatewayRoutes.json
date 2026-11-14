@@ -1,20 +1,5 @@
 [
   {
-    "method": "GET",
-    "path": "/internal/admin/ai-engine/target",
-    "kind": "explicit-admin"
-  },
-  {
-    "method": "PUT",
-    "path": "/internal/admin/ai-engine/target",
-    "kind": "explicit-admin"
-  },
-  {
-    "method": "DELETE",
-    "path": "/internal/admin/ai-engine/target",
-    "kind": "explicit-admin"
-  },
-  {
     "method": "POST",
     "path": "/internal/ai-engine/generate/quiz",
     "kind": "table",
@@ -304,18 +289,6 @@
   },
   {
     "method": "GET",
-    "path": "/v1/backoffice/kubernetes/overview",
-    "kind": "table",
-    "auth": "edge",
-    "upstream": "bff-backoffice",
-    "upstreamPath": "/v1/backoffice/kubernetes/overview",
-    "query": "drop",
-    "timeout": "default",
-    "mode": "raw",
-    "validated": false
-  },
-  {
-    "method": "GET",
     "path": "/v1/backoffice/ai-engine/target",
     "kind": "table",
     "auth": "edge",
@@ -363,120 +336,12 @@
     "validated": false
   },
   {
-    "method": "GET",
-    "path": "/v1/backoffice/ai-engine/presets",
-    "kind": "table",
-    "auth": "edge",
-    "upstream": "bff-backoffice",
-    "upstreamPath": "/v1/backoffice/ai-engine/presets",
-    "query": "drop",
-    "timeout": "default",
-    "mode": "raw",
-    "validated": false
-  },
-  {
-    "method": "POST",
-    "path": "/v1/backoffice/ai-engine/presets",
-    "kind": "table",
-    "auth": "edge",
-    "upstream": "bff-backoffice",
-    "upstreamPath": "/v1/backoffice/ai-engine/presets",
-    "query": "drop",
-    "timeout": "default",
-    "mode": "raw",
-    "validated": false
-  },
-  {
-    "method": "PUT",
-    "path": "/v1/backoffice/ai-engine/presets/:presetId",
-    "kind": "table",
-    "auth": "edge",
-    "upstream": "bff-backoffice",
-    "upstreamPath": "/v1/backoffice/ai-engine/presets/:presetId",
-    "query": "drop",
-    "timeout": "default",
-    "mode": "raw",
-    "validated": false
-  },
-  {
-    "method": "DELETE",
-    "path": "/v1/backoffice/ai-engine/presets/:presetId",
-    "kind": "table",
-    "auth": "edge",
-    "upstream": "bff-backoffice",
-    "upstreamPath": "/v1/backoffice/ai-engine/presets/:presetId",
-    "query": "drop",
-    "timeout": "default",
-    "mode": "raw",
-    "validated": false
-  },
-  {
     "method": "POST",
     "path": "/v1/backoffice/ai-engine/probe",
     "kind": "table",
     "auth": "edge",
     "upstream": "bff-backoffice",
     "upstreamPath": "/v1/backoffice/ai-engine/probe",
-    "query": "drop",
-    "timeout": "default",
-    "mode": "raw",
-    "validated": false
-  },
-  {
-    "method": "GET",
-    "path": "/v1/backoffice/ai-engine/connections",
-    "kind": "table",
-    "auth": "edge",
-    "upstream": "bff-backoffice",
-    "upstreamPath": "/v1/backoffice/ai-engine/connections",
-    "query": "drop",
-    "timeout": "default",
-    "mode": "raw",
-    "validated": false
-  },
-  {
-    "method": "POST",
-    "path": "/v1/backoffice/ai-engine/connections",
-    "kind": "table",
-    "auth": "edge",
-    "upstream": "bff-backoffice",
-    "upstreamPath": "/v1/backoffice/ai-engine/connections",
-    "query": "drop",
-    "timeout": "default",
-    "mode": "raw",
-    "validated": false
-  },
-  {
-    "method": "PUT",
-    "path": "/v1/backoffice/ai-engine/connections/:presetId",
-    "kind": "table",
-    "auth": "edge",
-    "upstream": "bff-backoffice",
-    "upstreamPath": "/v1/backoffice/ai-engine/connections/:presetId",
-    "query": "drop",
-    "timeout": "default",
-    "mode": "raw",
-    "validated": false
-  },
-  {
-    "method": "DELETE",
-    "path": "/v1/backoffice/ai-engine/connections/:presetId",
-    "kind": "table",
-    "auth": "edge",
-    "upstream": "bff-backoffice",
-    "upstreamPath": "/v1/backoffice/ai-engine/connections/:presetId",
-    "query": "drop",
-    "timeout": "default",
-    "mode": "raw",
-    "validated": false
-  },
-  {
-    "method": "POST",
-    "path": "/v1/backoffice/ai-engine/connections/:presetId/activate",
-    "kind": "table",
-    "auth": "edge",
-    "upstream": "bff-backoffice",
-    "upstreamPath": "/v1/backoffice/ai-engine/connections/:presetId/activate",
     "query": "drop",
     "timeout": "default",
     "mode": "raw",
@@ -513,42 +378,6 @@
     "auth": "edge",
     "upstream": "bff-backoffice",
     "upstreamPath": "/v1/backoffice/ai-diagnostics/tests/status",
-    "query": "drop",
-    "timeout": "default",
-    "mode": "raw",
-    "validated": false
-  },
-  {
-    "method": "GET",
-    "path": "/v1/backoffice/service-targets",
-    "kind": "table",
-    "auth": "edge",
-    "upstream": "bff-backoffice",
-    "upstreamPath": "/v1/backoffice/service-targets",
-    "query": "drop",
-    "timeout": "default",
-    "mode": "raw",
-    "validated": false
-  },
-  {
-    "method": "PUT",
-    "path": "/v1/backoffice/service-targets/:service",
-    "kind": "table",
-    "auth": "edge",
-    "upstream": "bff-backoffice",
-    "upstreamPath": "/v1/backoffice/service-targets/:service",
-    "query": "drop",
-    "timeout": "default",
-    "mode": "raw",
-    "validated": false
-  },
-  {
-    "method": "DELETE",
-    "path": "/v1/backoffice/service-targets/:service",
-    "kind": "table",
-    "auth": "edge",
-    "upstream": "bff-backoffice",
-    "upstreamPath": "/v1/backoffice/service-targets/:service",
     "query": "drop",
     "timeout": "default",
     "mode": "raw",

@@ -1,16 +1,15 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { isIP } from "node:net";
 
-/** @module security — Shared auth and network-allowlist helpers (fail-closed by default). */
+/** @module security — Shared auth and trust-proxy helpers (fail-closed by default). */
 
 export type SecurityConfig = {
   NODE_ENV: string;
   EDGE_API_TOKEN?: string;
-  API_GATEWAY_ADMIN_TOKEN?: string;
   INTERNAL_SERVICE_TOKEN?: string;
 };
 
-/** Only these NODE_ENV values may run with missing credentials or an empty routing allowlist. */
+/** Only these NODE_ENV values may run with missing credentials. */
 export function isPermissiveEnv(nodeEnv: string): boolean {
   const value = nodeEnv.trim().toLowerCase();
   return value === "development" || value === "test";
@@ -39,7 +38,7 @@ export function headerMatches(header: string | string[] | undefined, token: stri
   return safeEqual(header, token);
 }
 
-const REQUIRED_TOKENS = ["EDGE_API_TOKEN", "API_GATEWAY_ADMIN_TOKEN", "INTERNAL_SERVICE_TOKEN"] as const;
+const REQUIRED_TOKENS = ["EDGE_API_TOKEN", "INTERNAL_SERVICE_TOKEN"] as const;
 
 /** Names of required credentials that are empty or unset. */
 export function missingTokens(config: SecurityConfig): string[] {
@@ -67,47 +66,6 @@ export function insecureModeWarnings(config: SecurityConfig): string[] {
   return missingTokens(config).map(
     (name) => `${name} is empty: the matching routes are UNAUTHENTICATED (allowed only because NODE_ENV=${config.NODE_ENV})`,
   );
-}
-
-function ipv4ToInt(ip: string): number | null {
-  if (isIP(ip) !== 4) {
-    return null;
-  }
-  return ip.split(".").reduce((acc, part) => ((acc << 8) | Number(part)) >>> 0, 0);
-}
-
-function cidrContains(cidr: string, ip: string): boolean {
-  const [base, bitsRaw] = cidr.split("/");
-  const baseInt = ipv4ToInt(base ?? "");
-  const ipInt = ipv4ToInt(ip);
-  const bits = Number(bitsRaw);
-  if (baseInt === null || ipInt === null || !Number.isInteger(bits) || bits < 0 || bits > 32) {
-    return false;
-  }
-  if (bits === 0) {
-    return true;
-  }
-  const mask = (~0 << (32 - bits)) >>> 0;
-  return ((baseInt & mask) >>> 0) === ((ipInt & mask) >>> 0);
-}
-
-/**
- * Checks a target host against a comma-separated allowlist of hostnames, IPv4 addresses and IPv4 CIDRs.
- * Hostnames are matched literally (no DNS resolution), so CIDR entries only apply to IPv4 literals.
- * An empty allowlist allows everything only in development/test and denies everything otherwise.
- */
-export function isTargetHostAllowed(host: string, allowlist: string | undefined, nodeEnv: string): boolean {
-  const entries = (allowlist ?? "")
-    .split(",")
-    .map((entry) => entry.trim().toLowerCase())
-    .filter(Boolean);
-
-  if (entries.length === 0) {
-    return isPermissiveEnv(nodeEnv);
-  }
-
-  const candidate = host.trim().toLowerCase();
-  return entries.some((entry) => (entry.includes("/") ? cidrContains(entry, candidate) : entry === candidate));
 }
 
 export type TrustProxySetting = boolean | number | string[];

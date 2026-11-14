@@ -26,7 +26,7 @@ It sits between public clients and private internal services. It should be the o
 - apply CORS and ingress-level request shaping
 - forward mobile traffic to `bff-mobile`
 - forward backoffice traffic to `bff-backoffice`
-- expose stable internal AI proxy routes regardless of the active AI upstream target
+- expose stable internal AI proxy routes regardless of the AI upstream host
 
 ## Downstream dependency model
 
@@ -34,19 +34,14 @@ Primary downstream dependencies:
 
 - `bff-mobile`
 - `bff-backoffice`
-- active `ai-engine-api` target
-- active `ai-engine-stats` target
+- configured `ai-engine-api` URL
+- configured `ai-engine-stats` URL
 
 The gateway should not absorb domain business logic from quiz, word-pass, or users services.
 
-## Effective target model
+## Target model
 
-The architecture has two layers of target resolution:
-
-1. environment defaults for BFF and AI upstreams
-2. persisted runtime override for the active AI target
-
-This means a valid deployment does not by itself guarantee a valid effective AI topology.
+BFF and AI upstreams are resolved from environment configuration only. The gateway has no runtime override or persisted routing state, so a deployment is correct when its `*_URL` variables are.
 
 ## Request flow summary
 
@@ -60,9 +55,9 @@ This means a valid deployment does not by itself guarantee a valid effective AI 
 
 - edge auth rejects the request before forwarding
 - BFF target is unreachable or unhealthy
-- internal AI routes point to stale or invalid runtime target state
+- internal AI routes point to an unreachable or wrong configured upstream
 - gateway-level timeout is reached before downstream completion
 
 ## When to update
 
-Update this section when changing route ownership, forwarding behavior, timeout policy, or gateway-managed runtime targeting.
+Update this section when changing route ownership, forwarding behavior, timeout policy, or upstream configuration.

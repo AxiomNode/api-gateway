@@ -17,9 +17,6 @@ const ConfigSchema = z.object({
   UPSTREAM_GENERATION_TIMEOUT_MS: z.coerce.number().int().min(1000).max(300000).default(120000),
   EDGE_API_TOKEN: z.string().default(""),
   METRICS_LOG_BUFFER_SIZE: z.coerce.number().int().min(50).max(5000).default(1000),
-  GATEWAY_ROUTING_STATE_FILE: z.string().min(1).optional(),
-  ALLOWED_ROUTING_TARGET_HOSTS: z.string().min(1).optional(),
-  API_GATEWAY_ADMIN_TOKEN: z.string().optional(),
   INTERNAL_SERVICE_TOKEN: z.string().optional(),
   TRUST_PROXY: z
     .string()
@@ -57,9 +54,6 @@ export type AppConfig = Omit<
   | "METRICS_LOG_BUFFER_SIZE"
   | "UPSTREAM_TIMEOUT_MS"
   | "UPSTREAM_GENERATION_TIMEOUT_MS"
-  | "GATEWAY_ROUTING_STATE_FILE"
-  | "ALLOWED_ROUTING_TARGET_HOSTS"
-  | "API_GATEWAY_ADMIN_TOKEN"
   | "INTERNAL_SERVICE_TOKEN"
   | "TRUST_PROXY"
   | "RATE_LIMIT_ENABLED"
@@ -75,9 +69,6 @@ export type AppConfig = Omit<
   METRICS_LOG_BUFFER_SIZE?: number;
   UPSTREAM_TIMEOUT_MS?: number;
   UPSTREAM_GENERATION_TIMEOUT_MS?: number;
-  GATEWAY_ROUTING_STATE_FILE?: string;
-  ALLOWED_ROUTING_TARGET_HOSTS?: string;
-  API_GATEWAY_ADMIN_TOKEN?: string;
   INTERNAL_SERVICE_TOKEN?: string;
   TRUST_PROXY?: string;
   RATE_LIMIT_ENABLED?: boolean;

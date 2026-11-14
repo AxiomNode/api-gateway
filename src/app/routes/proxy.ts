@@ -10,19 +10,10 @@ import { LeaderboardQuerySchema } from "@axiomnode/shared-sdk-client";
 import { z } from "zod";
 
 import type { AppConfig } from "../config.js";
-import { RoutingStateStore } from "../services/routingStateStore.js";
-import { bearerMatches, headerMatches, isPermissiveEnv, isTargetHostAllowed } from "../services/security.js";
+import { bearerMatches, headerMatches, isPermissiveEnv } from "../services/security.js";
 import { ROUTE_TABLE, type Auth, type QueryPolicy, type TimeoutKind, type Upstream } from "./routeTable.js";
 
 /** @module proxy — Reverse-proxy routes forwarding requests to BFF-Mobile and BFF-Backoffice with circuit breakers. */
-
-const AiEngineTargetSchema = z.object({
-  host: z.string().trim().min(1).max(255),
-  protocol: z.enum(["http", "https"]).default("http"),
-  apiPort: z.coerce.number().int().min(1).max(65535).default(7001),
-  statsPort: z.coerce.number().int().min(1).max(65535).default(7000),
-  label: z.string().trim().max(80).optional(),
-});
 
 const MobileRandomQuerySchema = z.object({
   language: z.string().optional(),
@@ -36,118 +27,7 @@ function omitLanguageQuery<T extends Record<string, unknown>>(query: T): Omit<T,
   return rest;
 }
 
-function normalizeAiEngineHost(raw: string): string {
-  const trimmed = raw.trim().replace(/^https?:\/\//i, "").replace(/\/+$/, "");
-  const withoutPath = trimmed.split("/")[0] ?? "";
-  const withoutPort = withoutPath.replace(/:\d+$/, "");
-
-  if (!withoutPort || !/^[a-zA-Z0-9.-]+$/.test(withoutPort)) {
-    throw new Error("host must be a valid hostname or IPv4 address");
-  }
-
-  return withoutPort;
-}
-
-function buildAiEngineBaseUrl(protocol: "http" | "https", host: string, port: number): string {
-  return `${protocol}://${host}:${port}`;
-}
-
-function parseBaseUrl(url: string): {
-  host: string | null;
-  protocol: "http" | "https" | null;
-  port: number | null;
-} {
-  try {
-    const parsed = new URL(url);
-    const protocol = parsed.protocol === "https:" ? "https" : parsed.protocol === "http:" ? "http" : null;
-    const fallbackPort = protocol === "https" ? 443 : protocol === "http" ? 80 : NaN;
-    const parsedPort = parsed.port ? Number(parsed.port) : fallbackPort;
-
-    return {
-      host: parsed.hostname || null,
-      protocol,
-      port: Number.isFinite(parsedPort) ? parsedPort : null,
-    };
-  } catch {
-    return {
-      host: null,
-      protocol: null,
-      port: null,
-    };
-  }
-}
-
-function getAiEngineApiBaseUrl(config: AppConfig, routingStore: RoutingStateStore): string {
-  return routingStore.get("ai-engine-api")?.baseUrl ?? config.AI_ENGINE_API_URL ?? "http://localhost:7001";
-}
-
-function getAiEngineStatsBaseUrl(config: AppConfig, routingStore: RoutingStateStore): string {
-  return routingStore.get("ai-engine-stats")?.baseUrl ?? config.AI_ENGINE_STATS_URL ?? "http://localhost:7000";
-}
-
-function getAiEngineTarget(config: AppConfig, routingStore: RoutingStateStore) {
-  const apiBaseUrl = getAiEngineApiBaseUrl(config, routingStore);
-  const statsBaseUrl = getAiEngineStatsBaseUrl(config, routingStore);
-  const apiParsed = parseBaseUrl(apiBaseUrl);
-  const statsParsed = parseBaseUrl(statsBaseUrl);
-  const apiOverride = routingStore.get("ai-engine-api");
-  const statsOverride = routingStore.get("ai-engine-stats");
-  const activeOverride = apiOverride ?? statsOverride;
-
-  return {
-    source: activeOverride ? ("override" as const) : ("env" as const),
-    label: activeOverride?.label ?? null,
-    host: apiParsed.host ?? statsParsed.host,
-    protocol: apiParsed.protocol ?? statsParsed.protocol,
-    apiPort: apiParsed.port,
-    statsPort: statsParsed.port,
-    apiBaseUrl,
-    statsBaseUrl,
-    updatedAt: activeOverride?.updatedAt ?? null,
-  };
-}
-
-async function applyAiEngineTarget(config: AppConfig, routingStore: RoutingStateStore, input: z.infer<typeof AiEngineTargetSchema>): Promise<void> {
-  if (input.protocol !== "http" && input.protocol !== "https") {
-    throw new Error("protocol must be http or https");
-  }
-  const host = normalizeAiEngineHost(input.host);
-  if (!isTargetHostAllowed(host, config.ALLOWED_ROUTING_TARGET_HOSTS, config.NODE_ENV)) {
-    throw new Error("host is not in ALLOWED_ROUTING_TARGET_HOSTS");
-  }
-  const label = input.label?.trim() || undefined;
-  const updatedAt = new Date().toISOString();
-
-  await routingStore.set("ai-engine-api", {
-    baseUrl: buildAiEngineBaseUrl(input.protocol, host, input.apiPort),
-    label,
-    updatedAt,
-  });
-  await routingStore.set("ai-engine-stats", {
-    baseUrl: buildAiEngineBaseUrl(input.protocol, host, input.statsPort),
-    label,
-    updatedAt,
-  });
-}
-
-async function resetAiEngineTarget(routingStore: RoutingStateStore): Promise<void> {
-  await routingStore.delete("ai-engine-api");
-  await routingStore.delete("ai-engine-stats");
-}
-
-/**
- * Fail-closed bearer check. An empty token is only tolerated in development/test
- * (a warning is logged at startup); any other NODE_ENV rejects the request.
- */
-function isGatewayAdminAuthorized(request: FastifyRequest, config: AppConfig): boolean {
-  const token = config.API_GATEWAY_ADMIN_TOKEN?.trim();
-  if (!token) {
-    return isPermissiveEnv(config.NODE_ENV);
-  }
-
-  return bearerMatches(request.headers.authorization, token);
-}
-
+/** Fail-closed bearer check. An empty token is only tolerated in development/test; any other NODE_ENV rejects the request. */
 function checkEdgeAuth(request: FastifyRequest, reply: FastifyReply, config: AppConfig): boolean {
   const edgeApiToken = config.EDGE_API_TOKEN?.trim();
   if (!edgeApiToken) {
@@ -276,18 +156,11 @@ async function forwardRequest(
 
 /**
  * Makes `application/json` bodies reach the handlers as the original Buffer so raw routes can forward
- * them untouched. Routes that read `request.body` themselves opt back in to normal JSON parsing with
- * `config: { parseJsonBody: true }` (same parser and error behaviour as Fastify's default).
+ * them untouched. No gateway route reads a parsed JSON body (validated routes are GET-only).
  */
 function registerRawJsonBodyParser(app: FastifyInstance): void {
-  const parseJson = app.getDefaultJsonParser("error", "error");
   app.removeContentTypeParser("application/json");
-  app.addContentTypeParser("application/json", { parseAs: "buffer" }, (request, body, done) => {
-    const config = request.routeOptions?.config as { parseJsonBody?: boolean } | undefined;
-    if (config?.parseJsonBody) {
-      parseJson(request, (body as Buffer).toString("utf8"), done);
-      return;
-    }
+  app.addContentTypeParser("application/json", { parseAs: "buffer" }, (_request, body, done) => {
     done(null, body);
   });
 }
@@ -296,50 +169,13 @@ function registerRawJsonBodyParser(app: FastifyInstance): void {
 export async function proxyRoutes(app: FastifyInstance, config: AppConfig): Promise<void> {
   const upstreamTimeoutMs = config.UPSTREAM_TIMEOUT_MS ?? 15000;
   const upstreamGenerationTimeoutMs = config.UPSTREAM_GENERATION_TIMEOUT_MS ?? 60000;
-  const routingStore = new RoutingStateStore(config);
-  await routingStore.load();
   registerRawJsonBodyParser(app);
-
-  app.get("/internal/admin/ai-engine/target", async (request, reply) => {
-    if (!isGatewayAdminAuthorized(request, config)) {
-      return reply.code(401).send({ error: "Unauthorized" });
-    }
-
-    return reply.send(getAiEngineTarget(config, routingStore));
-  });
-
-  app.put("/internal/admin/ai-engine/target", { config: { parseJsonBody: true } }, async (request, reply) => {
-    if (!isGatewayAdminAuthorized(request, config)) {
-      return reply.code(401).send({ error: "Unauthorized" });
-    }
-
-    const parsed = AiEngineTargetSchema.safeParse(request.body ?? {});
-    if (!parsed.success) {
-      return reply.code(400).send({ message: "Invalid payload", errors: parsed.error.flatten() });
-    }
-
-    try {
-      await applyAiEngineTarget(config, routingStore, parsed.data);
-      return reply.send(getAiEngineTarget(config, routingStore));
-    } catch (error) {
-      return reply.code(400).send({ message: error instanceof Error ? error.message : "Invalid ai-engine target" });
-    }
-  });
-
-  app.delete("/internal/admin/ai-engine/target", async (request, reply) => {
-    if (!isGatewayAdminAuthorized(request, config)) {
-      return reply.code(401).send({ error: "Unauthorized" });
-    }
-
-    await resetAiEngineTarget(routingStore);
-    return reply.send(getAiEngineTarget(config, routingStore));
-  });
 
   const baseUrl: Record<Upstream, () => string> = {
     "bff-mobile": () => config.BFF_MOBILE_URL,
     "bff-backoffice": () => config.BFF_BACKOFFICE_URL,
-    "ai-engine-api": () => getAiEngineApiBaseUrl(config, routingStore),
-    "ai-engine-stats": () => getAiEngineStatsBaseUrl(config, routingStore),
+    "ai-engine-api": () => config.AI_ENGINE_API_URL ?? "http://localhost:7001",
+    "ai-engine-stats": () => config.AI_ENGINE_STATS_URL ?? "http://localhost:7000",
   };
   const timeoutMs: Record<TimeoutKind, number> = {
     default: upstreamTimeoutMs,
